@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -14,7 +15,14 @@ func run(cmd *cobra.Command, o *options.Options) error {
 	if err != nil {
 		return err
 	}
-	if !o.Quiet {
+	switch {
+	case o.JSON:
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(sum); encErr != nil {
+			return encErr
+		}
+	case !o.Quiet:
 		extra := ""
 		if o.Mirror {
 			extra = fmt.Sprintf(", %d deleted", sum.Deleted)

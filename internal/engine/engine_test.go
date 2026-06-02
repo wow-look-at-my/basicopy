@@ -324,6 +324,26 @@ func TestAutoscaleControllerRuns(t *testing.T) {
 	assert.EqualValues(t, 500, sum.Files)
 }
 
+func TestProgressAlwaysDraws(t *testing.T) {
+	oldP := progressInterval
+	progressInterval = time.Millisecond
+	defer func() { progressInterval = oldP }()
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	for i := 0; i < 100; i++ {
+		p := filepath.Join(src, fmt.Sprintf("f%d.bin", i))
+		writeFile(t, p, bytes.Repeat([]byte{byte(i)}, 30_000), 0o644)
+	}
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "always"}
+	require.NoError(t, o.Validate())
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 100, sum.Files)
+}
+
 func TestVerboseRealCopy(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

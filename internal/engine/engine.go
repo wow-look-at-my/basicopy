@@ -26,14 +26,14 @@ import (
 // Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
 // process exit.
 type Summary struct {
-	Files    int64
-	Dirs     int64
-	Symlinks int64
-	Linked   int64 // hardlinks preserved
-	Deleted  int64 // extraneous destination entries removed (--mirror)
-	Bytes    int64
-	Skipped  int64
-	Failed   int64
+	Files    int64 `json:"files"`
+	Dirs     int64 `json:"dirs"`
+	Symlinks int64 `json:"symlinks"`
+	Linked   int64 `json:"hardlinks"` // hardlinks preserved
+	Deleted  int64 `json:"deleted"`   // extraneous destination entries removed (--mirror)
+	Bytes    int64 `json:"bytes"`
+	Skipped  int64 `json:"skipped"`
+	Failed   int64 `json:"failed"`
 }
 
 // Run executes the copy described by opts, returning a Summary even on partial
@@ -72,8 +72,10 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 			r.wg.Add(1)
 			go r.worker()
 		}
-		go r.runController(ctx, stopBg)
-		go r.runWatchdog(ctx, stopBg)
+		r.bgWg.Add(3)
+		go func() { defer r.bgWg.Done(); r.runController(ctx, stopBg) }()
+		go func() { defer r.bgWg.Done(); r.runWatchdog(ctx, stopBg) }()
+		go func() { defer r.bgWg.Done(); r.runProgress(ctx, stopBg) }()
 	}
 
 	err := r.walk(ctx)
@@ -82,6 +84,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	if !opts.DryRun {
 		r.wg.Wait()
 		close(stopBg)
+		r.bgWg.Wait()
 	}
 	close(stopWatch)
 
@@ -114,7 +117,8 @@ type runner struct {
 
 	gate *gate
 	jobs chan fileJob
-	wg   sync.WaitGroup
+	wg   sync.WaitGroup // copy workers
+	bgWg sync.WaitGroup // background goroutines: controller, watchdog, progress
 
 	outMu  sync.Mutex
 	stdout io.Writer
