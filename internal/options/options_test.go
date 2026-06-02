@@ -1,12 +1,15 @@
 package options
 
-import "testing"
+import (
+	"testing"
+	"github.com/wow-look-at-my/testify/assert"
+)
 
 func TestParseSize(t *testing.T) {
 	cases := []struct {
-		in   string
-		want int64
-		ok   bool
+		in	string
+		want	int64
+		ok	bool
 	}{
 		{"", 0, true},
 		{"0", 0, true},
@@ -30,17 +33,12 @@ func TestParseSize(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, err := ParseSize(c.in)
-		if c.ok && err != nil {
-			t.Errorf("ParseSize(%q) unexpected error: %v", c.in, err)
-			continue
-		}
-		if !c.ok && err == nil {
-			t.Errorf("ParseSize(%q) expected error, got %d", c.in, got)
-			continue
-		}
-		if c.ok && got != c.want {
-			t.Errorf("ParseSize(%q) = %d, want %d", c.in, got, c.want)
-		}
+		assert.False(t, c.ok && err != nil)
+
+		assert.False(t, !c.ok && err == nil)
+
+		assert.False(t, c.ok && got != c.want)
+
 	}
 }
 
@@ -50,9 +48,9 @@ func baseValid() Options {
 
 func TestValidate(t *testing.T) {
 	cases := []struct {
-		name string
-		mod  func(*Options)
-		ok   bool
+		name	string
+		mod	func(*Options)
+		ok	bool
 	}{
 		{"valid target-dir", func(o *Options) {}, true},
 		{"valid target-file", func(o *Options) { o.TargetDir = ""; o.TargetFile = "f" }, true},
@@ -70,11 +68,9 @@ func TestValidate(t *testing.T) {
 		o := baseValid()
 		c.mod(&o)
 		err := o.Validate()
-		if c.ok && err != nil {
-			t.Errorf("%s: unexpected error: %v", c.name, err)
-		}
-		if !c.ok && err == nil {
-			t.Errorf("%s: expected error, got nil", c.name)
-		}
+		assert.False(t, c.ok && err != nil)
+
+		assert.False(t, !c.ok && err == nil)
+
 	}
 }
