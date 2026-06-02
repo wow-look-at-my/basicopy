@@ -9,3 +9,5 @@ import "os"
 func fileKey(info os.FileInfo) (key string, nlink uint64, ok bool) {
 	return "", 0, false
 }
+
+func fileDev(info os.FileInfo) (uint64, bool) { return 0, false }

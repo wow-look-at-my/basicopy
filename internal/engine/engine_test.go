@@ -213,6 +213,58 @@ func TestTargetFileRejectsDir(t *testing.T) {
 	assert.Error(t, err, "--target-file with a directory source must error")
 }
 
+func TestSkipUnchangedOnRerun(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("hello"), 0o644)
+	writeFile(t, filepath.Join(src, "sub", "b.txt"), []byte("world"), 0o644)
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum1, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, sum1.Files)
+
+	sum2, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, sum2.Files, "re-run should copy nothing")
+	assert.EqualValues(t, 2, sum2.Skipped, "re-run should skip both unchanged files")
+}
+
+func TestExcludeFilter(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "keep.txt"), []byte("k"), 0o644)
+	writeFile(t, filepath.Join(src, "drop.tmp"), []byte("d"), 0o644)
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Exclude: []string{"*.tmp"}, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	_, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	_, statErr := os.Stat(filepath.Join(dst, "src", "drop.tmp"))
+	assert.True(t, os.IsNotExist(statErr), "*.tmp should be excluded")
+	assertSameContent(t, filepath.Join(src, "keep.txt"), filepath.Join(dst, "src", "keep.txt"))
+}
+
+func TestIncludeOverridesExclude(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.log"), []byte("a"), 0o644)
+	writeFile(t, filepath.Join(src, "keep.log"), []byte("k"), 0o644)
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Exclude: []string{"*.log"}, Include: []string{"keep.log"}, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	_, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	_, e1 := os.Stat(filepath.Join(dst, "src", "a.log"))
+	assert.True(t, os.IsNotExist(e1), "a.log should be excluded")
+	_, e2 := os.Stat(filepath.Join(dst, "src", "keep.log"))
+	assert.NoError(t, e2, "keep.log should be re-included")
+}
+
 func TestAutoscaleControllerRuns(t *testing.T) {
 	old := controlInterval
 	controlInterval = time.Millisecond

@@ -19,6 +19,7 @@ import (
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/options"
+	"github.com/wow-look-at-my/basicopy/internal/scan"
 )
 
 // Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
@@ -123,6 +124,8 @@ type runner struct {
 	onStack     map[string]bool
 	hardlinkMap map[string]string // inode key -> first destination ("primary")
 	hardlinks   []linkEnt         // secondary links to create after all copies
+	rootDev     uint64            // device of the current source root (one-file-system)
+	rootDevSet  bool
 }
 
 type linkEnt struct{ target, dst string }
@@ -197,6 +200,7 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 	if err := r.ensureRoot(filepath.Dir(r.opts.TargetFile)); err != nil {
 		return err
 	}
+	r.setRootDev(fi)
 	rootAbs, _ := filepath.Abs(filepath.Dir(src))
 	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi)
 	return nil
@@ -221,6 +225,7 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 			r.fail(err)
 			continue
 		}
+		r.setRootDev(fi)
 		rootAbs, _ := filepath.Abs(clean)
 		r.visit(ctx, src, filepath.Join(r.opts.TargetDir, base), rootAbs, fi)
 	}
@@ -240,11 +245,23 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 	default:
 	}
 
+	if r.excluded(srcPath, srcRootAbs) {
+		r.verbose("exclude %s", srcPath)
+		return
+	}
+
 	mode := fi.Mode()
 	switch {
 	case mode&os.ModeSymlink != 0:
 		r.visitSymlink(ctx, srcPath, dstPath, srcRootAbs, fi)
 	case mode.IsDir():
+		if r.opts.OneFileSystem && r.rootDevSet {
+			if dev, ok := fileDev(fi); ok && dev != r.rootDev {
+				r.note("skipping mount point %s", srcPath)
+				r.skipped.Add(1)
+				return
+			}
+		}
 		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, fi)
 	case mode.IsRegular():
 		r.handleRegular(srcPath, dstPath, fi)
@@ -258,6 +275,11 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 // linked inode is copied; subsequent paths are recorded to be link()ed to that
 // first copy after all copies finish. Single-link files are just copied.
 func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo) {
+	if scan.Unchanged(srcPath, fi, dstPath, r.opts.Checksum) {
+		r.skipped.Add(1)
+		r.verbose("skip unchanged %s", dstPath)
+		return
+	}
 	if !r.opts.NoHardlinks && !r.opts.DryRun {
 		if key, nlink, ok := fileKey(fi); ok && nlink > 1 {
 			if primary, seen := r.hardlinkMap[key]; seen {
@@ -512,6 +534,46 @@ func (r *runner) verbose(format string, a ...any) {
 	r.outMu.Lock()
 	fmt.Fprintf(r.stdout, format+"\n", a...)
 	r.outMu.Unlock()
+}
+
+func (r *runner) setRootDev(fi os.FileInfo) {
+	if dev, ok := fileDev(fi); ok {
+		r.rootDev, r.rootDevSet = dev, true
+	} else {
+		r.rootDevSet = false
+	}
+}
+
+// excluded applies the --exclude/--include globs. A path is excluded if it
+// matches any --exclude pattern and no --include pattern; patterns are matched
+// against both the path relative to the source root and the basename.
+func (r *runner) excluded(srcPath, srcRootAbs string) bool {
+	if len(r.opts.Exclude) == 0 && len(r.opts.Include) == 0 {
+		return false
+	}
+	base := filepath.Base(srcPath)
+	rel := base
+	if abs, err := filepath.Abs(srcPath); err == nil {
+		if rp, err := filepath.Rel(srcRootAbs, abs); err == nil {
+			rel = rp
+		}
+	}
+	for _, inc := range r.opts.Include {
+		if matchGlob(inc, rel) || matchGlob(inc, base) {
+			return false
+		}
+	}
+	for _, exc := range r.opts.Exclude {
+		if matchGlob(exc, rel) || matchGlob(exc, base) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchGlob(pattern, name string) bool {
+	ok, err := filepath.Match(pattern, name)
+	return err == nil && ok
 }
 
 // withinRoot reports whether targetAbs lies at or beneath rootAbs.
