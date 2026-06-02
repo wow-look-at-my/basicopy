@@ -1,0 +1,9 @@
+# Build output
+/basicopy
+/dist/
+*.test
+*.out
+
+# Editor / OS cruft
+.DS_Store
+/build/
