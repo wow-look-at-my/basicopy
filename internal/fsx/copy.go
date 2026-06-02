@@ -52,12 +52,7 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 		}
 	}()
 
-	bufSize := o.BufSize
-	if bufSize <= 0 {
-		bufSize = DefaultBufSize
-	}
-	buf := make([]byte, bufSize)
-	n, err := io.CopyBuffer(tmp, in, buf)
+	n, err := copyData(tmp, in, info, o.BufSize)
 	if err != nil {
 		return n, fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
@@ -92,4 +87,14 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 	}
 	committed = true
 	return n, nil
+}
+
+// plainCopy is the portable buffered fallback: a straight streamed copy from the
+// current offsets of src to dst. It is shared by the platform copyData functions.
+func plainCopy(dst, src *os.File, bufSize int) (int64, error) {
+	if bufSize <= 0 {
+		bufSize = DefaultBufSize
+	}
+	buf := make([]byte, bufSize)
+	return io.CopyBuffer(dst, src, buf)
 }
