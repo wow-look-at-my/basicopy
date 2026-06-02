@@ -27,6 +27,7 @@ type Summary struct {
 	Files    int64
 	Dirs     int64
 	Symlinks int64
+	Linked   int64 // hardlinks preserved
 	Bytes    int64
 	Skipped  int64
 	Failed   int64
@@ -38,10 +39,11 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	maxW, initW := workerCount(opts)
 	r := &runner{
 		opts:    opts,
-		stdout:  os.Stdout,
-		stderr:  os.Stderr,
-		onStack: map[string]bool{},
-		gate:    newGate(maxW, initW),
+		stdout:      os.Stdout,
+		stderr:      os.Stderr,
+		onStack:     map[string]bool{},
+		hardlinkMap: map[string]string{},
+		gate:        newGate(maxW, initW),
 		jobs:    make(chan fileJob, 1024),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
@@ -83,6 +85,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		err = r.abortErr()
 	}
 	if !opts.DryRun {
+		r.applyHardlinks()
 		r.applyDirMeta()
 	}
 	return r.summary(), err
@@ -110,13 +113,19 @@ type runner struct {
 	stdout io.Writer
 	stderr io.Writer
 
-	files, dirs, symlinks, bytes, skipped, failed atomic.Int64
+	files, dirs, symlinks, bytes, skipped, failed, linked atomic.Int64
 
-	abortMu  sync.Mutex
-	aborted  error
-	dirMeta  []dirMetaEnt // appended only on the walk goroutine
-	onStack  map[string]bool
+	abortMu sync.Mutex
+	aborted error
+
+	// Walk-goroutine-owned state (no locking needed): applied after wg.Wait.
+	dirMeta     []dirMetaEnt
+	onStack     map[string]bool
+	hardlinkMap map[string]string // inode key -> first destination ("primary")
+	hardlinks   []linkEnt         // secondary links to create after all copies
 }
+
+type linkEnt struct{ target, dst string }
 
 // workerCount returns the gate ceiling and its initial limit. With --max-threads
 // the count is pinned; otherwise it scales with CPU count (the M4 controller will
@@ -238,10 +247,40 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 	case mode.IsDir():
 		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, fi)
 	case mode.IsRegular():
-		r.enqueueFile(srcPath, dstPath, fi)
+		r.handleRegular(srcPath, dstPath, fi)
 	default:
 		r.note("skipping special file %s", srcPath)
 		r.skipped.Add(1)
+	}
+}
+
+// handleRegular preserves hardlinks (default-on): the first path to a multiply-
+// linked inode is copied; subsequent paths are recorded to be link()ed to that
+// first copy after all copies finish. Single-link files are just copied.
+func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo) {
+	if !r.opts.NoHardlinks && !r.opts.DryRun {
+		if key, nlink, ok := fileKey(fi); ok && nlink > 1 {
+			if primary, seen := r.hardlinkMap[key]; seen {
+				r.hardlinks = append(r.hardlinks, linkEnt{target: primary, dst: dstPath})
+				return
+			}
+			r.hardlinkMap[key] = dstPath
+		}
+	}
+	r.enqueueFile(srcPath, dstPath, fi)
+}
+
+// applyHardlinks creates the recorded secondary hardlinks after all primary
+// copies have completed.
+func (r *runner) applyHardlinks() {
+	for _, l := range r.hardlinks {
+		_ = os.Remove(l.dst) // tolerate a leftover from a prior run
+		if err := os.Link(l.target, l.dst); err != nil {
+			r.fail(fmt.Errorf("hardlink %s -> %s: %w", l.dst, l.target, err))
+			continue
+		}
+		r.linked.Add(1)
+		r.verbose("%s => %s (hardlink)", l.dst, l.target)
 	}
 }
 
@@ -439,6 +478,7 @@ func (r *runner) summary() *Summary {
 		Files:    r.files.Load(),
 		Dirs:     r.dirs.Load(),
 		Symlinks: r.symlinks.Load(),
+		Linked:   r.linked.Load(),
 		Bytes:    r.bytes.Load(),
 		Skipped:  r.skipped.Load(),
 		Failed:   r.failed.Load(),

@@ -16,8 +16,8 @@ func run(cmd *cobra.Command, o *options.Options) error {
 	}
 	if !o.Quiet {
 		fmt.Fprintf(cmd.OutOrStdout(),
-			"basicopy: %d files, %d dirs, %d symlinks, %s; %d skipped, %d failed\n",
-			sum.Files, sum.Dirs, sum.Symlinks, humanBytes(sum.Bytes), sum.Skipped, sum.Failed)
+			"basicopy: %d files, %d dirs, %d symlinks, %d hardlinks, %s; %d skipped, %d failed\n",
+			sum.Files, sum.Dirs, sum.Symlinks, sum.Linked, humanBytes(sum.Bytes), sum.Skipped, sum.Failed)
 	}
 	if sum.Failed > 0 {
 		return fmt.Errorf("%d item(s) failed", sum.Failed)
