@@ -1,8 +1,9 @@
 // Package engine orchestrates a copy run: it resolves the destination, walks the
-// sources, and copies each entry using the fsx primitives. This file implements a
-// correct *sequential* copy (path semantics, auto-mkdir, metadata, and the
-// symlink follow/keep/loop rules). Parallelism and the auto-scaling controller
-// are layered on in later milestones without changing this observable behavior.
+// sources (pipelined), and copies files concurrently through a resizable gate
+// using the fsx primitives. Directory creation and symlink handling happen on the
+// walk goroutine so a child's parent always exists before the child is scheduled;
+// directory metadata is applied after all copies complete so file writes don't
+// bump directory mtimes back.
 package engine
 
 import (
@@ -11,14 +12,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
 
-// Summary reports the outcome of a copy run. A Failed count > 0 should map to a
-// non-zero process exit.
+// Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
+// process exit.
 type Summary struct {
 	Files    int64
 	Dirs     int64
@@ -31,39 +35,135 @@ type Summary struct {
 // Run executes the copy described by opts, returning a Summary even on partial
 // failure.
 func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
+	maxW, initW := workerCount(opts)
 	r := &runner{
 		opts:    opts,
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
 		onStack: map[string]bool{},
+		gate:    newGate(maxW, initW),
+		jobs:    make(chan fileJob, 1024),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
 			Fsync:    opts.Fsync,
 			BufSize:  int(opts.BufferSize),
 		},
 	}
-	err := r.run(ctx)
-	return &r.sum, err
+
+	// Cancel the run if the context is cancelled (Ctrl-C); crash-safe temp files
+	// are cleaned up by fsx.CopyFile's deferred removal.
+	stopWatch := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			r.setAbort(ctx.Err())
+		case <-stopWatch:
+		}
+	}()
+
+	if !opts.DryRun {
+		for i := 0; i < maxW; i++ {
+			r.wg.Add(1)
+			go r.worker()
+		}
+	}
+
+	err := r.walk(ctx)
+
+	close(r.jobs)
+	if !opts.DryRun {
+		r.wg.Wait()
+	}
+	close(stopWatch)
+
+	if err == nil {
+		err = r.abortErr()
+	}
+	if !opts.DryRun {
+		r.applyDirMeta()
+	}
+	return r.summary(), err
+}
+
+type fileJob struct {
+	src, dst string
+	info     os.FileInfo
+}
+
+type dirMetaEnt struct {
+	dst  string
+	info os.FileInfo
 }
 
 type runner struct {
 	opts     *options.Options
 	copyOpts fsx.CopyOptions
-	stdout   io.Writer
-	stderr   io.Writer
-	sum      Summary
-	onStack  map[string]bool // canonical dirs reached via a followed symlink (loop guard)
-	abort    error           // set when --fatal-errors trips or the context is cancelled
+
+	gate *gate
+	jobs chan fileJob
+	wg   sync.WaitGroup
+
+	outMu  sync.Mutex
+	stdout io.Writer
+	stderr io.Writer
+
+	files, dirs, symlinks, bytes, skipped, failed atomic.Int64
+
+	abortMu  sync.Mutex
+	aborted  error
+	dirMeta  []dirMetaEnt // appended only on the walk goroutine
+	onStack  map[string]bool
 }
 
-func (r *runner) run(ctx context.Context) error {
-	if r.opts.TargetFile != "" {
-		return r.runTargetFile(ctx)
+// workerCount returns the gate ceiling and its initial limit. With --max-threads
+// the count is pinned; otherwise it scales with CPU count (the M4 controller will
+// drive the live limit between 1 and the ceiling).
+func workerCount(opts *options.Options) (max, initial int) {
+	if opts.MaxThreads > 0 {
+		return opts.MaxThreads, opts.MaxThreads
 	}
-	return r.runTargetDir(ctx)
+	n := runtime.NumCPU() * 8
+	if n < 8 {
+		n = 8
+	}
+	if n > 256 {
+		n = 256
+	}
+	return n, n
 }
 
-func (r *runner) runTargetFile(ctx context.Context) error {
+func (r *runner) worker() {
+	defer r.wg.Done()
+	for job := range r.jobs {
+		if r.abortErr() != nil {
+			continue // drain the channel without doing work
+		}
+		r.gate.acquire()
+		r.copyOne(job)
+		r.gate.release()
+	}
+}
+
+// copyOne performs a single file copy and records stats. Safe for concurrent use.
+func (r *runner) copyOne(job fileJob) {
+	n, err := fsx.CopyFile(job.src, job.dst, job.info, r.copyOpts)
+	if err != nil {
+		r.fail(err)
+		return
+	}
+	r.files.Add(1)
+	r.bytes.Add(n)
+	r.verbose("%s", job.dst)
+}
+
+func (r *runner) walk(ctx context.Context) error {
+	if r.opts.TargetFile != "" {
+		return r.walkTargetFile(ctx)
+	}
+	return r.walkTargetDir(ctx)
+}
+
+func (r *runner) walkTargetFile(ctx context.Context) error {
 	src := r.opts.Sources[0]
 	fi, err := os.Lstat(src)
 	if err != nil {
@@ -76,16 +176,16 @@ func (r *runner) runTargetFile(ctx context.Context) error {
 		return err
 	}
 	rootAbs, _ := filepath.Abs(filepath.Dir(src))
-	r.copyEntry(ctx, src, r.opts.TargetFile, rootAbs, fi)
-	return r.abort
+	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi)
+	return nil
 }
 
-func (r *runner) runTargetDir(ctx context.Context) error {
+func (r *runner) walkTargetDir(ctx context.Context) error {
 	if err := r.ensureRoot(r.opts.TargetDir); err != nil {
 		return err
 	}
 	for _, src := range r.opts.Sources {
-		if r.abort != nil {
+		if r.abortErr() != nil {
 			break
 		}
 		clean := filepath.Clean(src)
@@ -100,21 +200,20 @@ func (r *runner) runTargetDir(ctx context.Context) error {
 			continue
 		}
 		rootAbs, _ := filepath.Abs(clean)
-		r.copyEntry(ctx, src, filepath.Join(r.opts.TargetDir, base), rootAbs, fi)
+		r.visit(ctx, src, filepath.Join(r.opts.TargetDir, base), rootAbs, fi)
 	}
-	return r.abort
+	return nil
 }
 
-// copyEntry dispatches a single filesystem entry by type. srcRootAbs is the
-// absolute root of the source currently being copied, used for in-tree symlink
-// detection.
-func (r *runner) copyEntry(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo) {
-	if r.abort != nil {
+// visit dispatches a single entry. Directories and symlinks are handled on the
+// walk goroutine; regular files are queued for the worker pool.
+func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo) {
+	if r.abortErr() != nil {
 		return
 	}
 	select {
 	case <-ctx.Done():
-		r.abort = ctx.Err()
+		r.setAbort(ctx.Err())
 		return
 	default:
 	}
@@ -122,32 +221,33 @@ func (r *runner) copyEntry(ctx context.Context, srcPath, dstPath, srcRootAbs str
 	mode := fi.Mode()
 	switch {
 	case mode&os.ModeSymlink != 0:
-		r.handleSymlink(ctx, srcPath, dstPath, srcRootAbs, fi)
+		r.visitSymlink(ctx, srcPath, dstPath, srcRootAbs, fi)
 	case mode.IsDir():
-		r.copyDir(ctx, srcPath, dstPath, srcRootAbs, fi)
+		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, fi)
 	case mode.IsRegular():
-		r.copyRegular(srcPath, dstPath, fi)
+		r.enqueueFile(srcPath, dstPath, fi)
 	default:
 		r.note("skipping special file %s", srcPath)
-		r.sum.Skipped++
+		r.skipped.Add(1)
 	}
 }
 
-func (r *runner) copyDir(ctx context.Context, srcDir, dstDir, srcRootAbs string, fi os.FileInfo) {
+func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string, fi os.FileInfo) {
 	if !r.opts.DryRun {
 		if err := os.MkdirAll(dstDir, 0o777); err != nil {
 			r.fail(fmt.Errorf("mkdir %s: %w", dstDir, err))
 			return
 		}
+		r.dirMeta = append(r.dirMeta, dirMetaEnt{dst: dstDir, info: fi})
 	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		r.fail(fmt.Errorf("read dir %s: %w", srcDir, err))
 		return
 	}
-	r.sum.Dirs++
+	r.dirs.Add(1)
 	for _, e := range entries {
-		if r.abort != nil {
+		if r.abortErr() != nil {
 			return
 		}
 		cfi, err := e.Info()
@@ -155,34 +255,21 @@ func (r *runner) copyDir(ctx context.Context, srcDir, dstDir, srcRootAbs string,
 			r.fail(err)
 			continue
 		}
-		r.copyEntry(ctx, filepath.Join(srcDir, e.Name()), filepath.Join(dstDir, e.Name()), srcRootAbs, cfi)
-	}
-	// Apply directory metadata after children so their writes don't bump mtime.
-	if !r.opts.DryRun {
-		if err := fsx.ApplyMeta(dstDir, fi, r.copyOpts.Preserve); err != nil {
-			r.warn("metadata on %s: %v", dstDir, err)
-		}
+		r.visit(ctx, filepath.Join(srcDir, e.Name()), filepath.Join(dstDir, e.Name()), srcRootAbs, cfi)
 	}
 }
 
-func (r *runner) copyRegular(srcPath, dstPath string, fi os.FileInfo) {
+func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo) {
 	if r.opts.DryRun {
-		r.sum.Files++
-		r.sum.Bytes += fi.Size()
+		r.files.Add(1)
+		r.bytes.Add(fi.Size())
 		r.verbose("would copy %s", dstPath)
 		return
 	}
-	n, err := fsx.CopyFile(srcPath, dstPath, fi, r.copyOpts)
-	if err != nil {
-		r.fail(err)
-		return
-	}
-	r.sum.Files++
-	r.sum.Bytes += n
-	r.verbose("%s", dstPath)
+	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi}
 }
 
-func (r *runner) handleSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo) {
+func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo) {
 	target, err := os.Readlink(srcPath)
 	if err != nil {
 		r.fail(err)
@@ -216,7 +303,6 @@ func (r *runner) handleSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs
 		return
 	}
 
-	// In-tree: dereference into real content.
 	switch {
 	case tfi.IsDir():
 		canon, err := filepath.EvalSymlinks(srcPath)
@@ -226,23 +312,23 @@ func (r *runner) handleSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs
 		}
 		if r.onStack[canon] {
 			r.warn("symlink loop at %s (skipped)", srcPath)
-			r.sum.Skipped++
+			r.skipped.Add(1)
 			return
 		}
 		r.onStack[canon] = true
-		r.copyDir(ctx, srcPath, dstPath, srcRootAbs, tfi)
+		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, tfi)
 		delete(r.onStack, canon)
 	case tfi.Mode().IsRegular():
-		r.copyRegular(srcPath, dstPath, tfi)
+		r.enqueueFile(srcPath, dstPath, tfi)
 	default:
 		r.note("skipping special symlink target %s", srcPath)
-		r.sum.Skipped++
+		r.skipped.Add(1)
 	}
 }
 
 func (r *runner) recreateSymlink(target, dstPath string, fi os.FileInfo) {
 	if r.opts.DryRun {
-		r.sum.Symlinks++
+		r.symlinks.Add(1)
 		r.verbose("would link %s -> %s", dstPath, target)
 		return
 	}
@@ -254,8 +340,18 @@ func (r *runner) recreateSymlink(target, dstPath string, fi os.FileInfo) {
 	if err := fsx.ApplyMeta(dstPath, fi, r.copyOpts.Preserve); err != nil {
 		r.warn("metadata on %s: %v", dstPath, err)
 	}
-	r.sum.Symlinks++
+	r.symlinks.Add(1)
 	r.verbose("%s -> %s", dstPath, target)
+}
+
+// applyDirMeta sets directory metadata after all file copies, so additions to a
+// directory during the run don't override its restored mtime.
+func (r *runner) applyDirMeta() {
+	for _, d := range r.dirMeta {
+		if err := fsx.ApplyMeta(d.dst, d.info, r.copyOpts.Preserve); err != nil {
+			r.warn("metadata on %s: %v", d.dst, err)
+		}
+	}
 }
 
 // ensureRoot makes the destination root exist, creating missing ancestors and
@@ -286,46 +382,83 @@ func (r *runner) ensureRoot(dir string) error {
 	}
 	for i := len(missing) - 1; i >= 0; i-- {
 		if r.opts.DryRun {
-			fmt.Fprintf(r.stderr, "basicopy: would create directory %s\n", missing[i])
+			r.elog("basicopy: would create directory %s", missing[i])
 			continue
 		}
 		if err := os.Mkdir(missing[i], 0o777); err != nil && !os.IsExist(err) {
 			return fmt.Errorf("create %s: %w", missing[i], err)
 		}
-		fmt.Fprintf(r.stderr, "basicopy: created directory %s\n", missing[i])
+		r.elog("basicopy: created directory %s", missing[i])
 	}
 	return nil
+}
+
+func (r *runner) setAbort(err error) {
+	if err == nil {
+		return
+	}
+	r.abortMu.Lock()
+	if r.aborted == nil {
+		r.aborted = err
+	}
+	r.abortMu.Unlock()
+}
+
+func (r *runner) abortErr() error {
+	r.abortMu.Lock()
+	defer r.abortMu.Unlock()
+	return r.aborted
 }
 
 func (r *runner) fail(err error) {
 	if err == nil {
 		return
 	}
-	r.sum.Failed++
-	fmt.Fprintf(r.stderr, "basicopy: error: %v\n", err)
-	if r.opts.FatalErrors && r.abort == nil {
-		r.abort = err
+	r.failed.Add(1)
+	r.elog("basicopy: error: %v", err)
+	if r.opts.FatalErrors {
+		r.setAbort(err)
 	}
+}
+
+func (r *runner) summary() *Summary {
+	return &Summary{
+		Files:    r.files.Load(),
+		Dirs:     r.dirs.Load(),
+		Symlinks: r.symlinks.Load(),
+		Bytes:    r.bytes.Load(),
+		Skipped:  r.skipped.Load(),
+		Failed:   r.failed.Load(),
+	}
+}
+
+func (r *runner) elog(format string, a ...any) {
+	r.outMu.Lock()
+	fmt.Fprintf(r.stderr, format+"\n", a...)
+	r.outMu.Unlock()
 }
 
 func (r *runner) warn(format string, a ...any) {
 	if r.opts.Quiet {
 		return
 	}
-	fmt.Fprintf(r.stderr, "basicopy: warning: "+format+"\n", a...)
+	r.elog("basicopy: warning: "+format, a...)
 }
 
 func (r *runner) note(format string, a ...any) {
 	if r.opts.Quiet {
 		return
 	}
-	fmt.Fprintf(r.stderr, "basicopy: "+format+"\n", a...)
+	r.elog("basicopy: "+format, a...)
 }
 
 func (r *runner) verbose(format string, a ...any) {
-	if r.opts.Verbose {
-		fmt.Fprintf(r.stdout, format+"\n", a...)
+	if !r.opts.Verbose {
+		return
 	}
+	r.outMu.Lock()
+	fmt.Fprintf(r.stdout, format+"\n", a...)
+	r.outMu.Unlock()
 }
 
 // withinRoot reports whether targetAbs lies at or beneath rootAbs.
