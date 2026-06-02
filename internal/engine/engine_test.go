@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/wow-look-at-my/basicopy/internal/options"
 	"github.com/wow-look-at-my/testify/assert"
@@ -208,6 +211,30 @@ func TestTargetFileRejectsDir(t *testing.T) {
 
 	_, err := Run(context.Background(), o)
 	assert.Error(t, err, "--target-file with a directory source must error")
+}
+
+func TestAutoscaleControllerRuns(t *testing.T) {
+	old := controlInterval
+	controlInterval = time.Millisecond
+	defer func() { controlInterval = old }()
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	// Enough files and bytes that the copy spans several controller ticks.
+	for d := 0; d < 10; d++ {
+		for f := 0; f < 50; f++ {
+			p := filepath.Join(src, fmt.Sprintf("d%d", d), fmt.Sprintf("f%d.bin", f))
+			writeFile(t, p, bytes.Repeat([]byte{byte(f)}, 20_000), 0o644)
+		}
+	}
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Failed)
+	assert.EqualValues(t, 500, sum.Files)
 }
 
 func TestVerboseRealCopy(t *testing.T) {

@@ -45,3 +45,18 @@ func (g *gate) release() {
 	g.cond.Signal()
 	g.mu.Unlock()
 }
+
+// setLimit changes the number of concurrent holders allowed, clamped to [1,max].
+// The auto-scaling controller calls this every tick.
+func (g *gate) setLimit(n int) {
+	g.mu.Lock()
+	if n < 1 {
+		n = 1
+	}
+	if n > g.max {
+		n = g.max
+	}
+	g.limit = n
+	g.cond.Broadcast()
+	g.mu.Unlock()
+}

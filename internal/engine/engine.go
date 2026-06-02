@@ -61,11 +61,13 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		}
 	}()
 
+	controlStop := make(chan struct{})
 	if !opts.DryRun {
 		for i := 0; i < maxW; i++ {
 			r.wg.Add(1)
 			go r.worker()
 		}
+		go r.runController(ctx, controlStop)
 	}
 
 	err := r.walk(ctx)
@@ -73,6 +75,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	close(r.jobs)
 	if !opts.DryRun {
 		r.wg.Wait()
+		close(controlStop)
 	}
 	close(stopWatch)
 
@@ -119,17 +122,27 @@ type runner struct {
 // the count is pinned; otherwise it scales with CPU count (the M4 controller will
 // drive the live limit between 1 and the ceiling).
 func workerCount(opts *options.Options) (max, initial int) {
-	if opts.MaxThreads > 0 {
-		return opts.MaxThreads, opts.MaxThreads
+	max = opts.MaxThreads
+	if max <= 0 {
+		max = runtime.NumCPU() * 8
+		if max < 8 {
+			max = 8
+		}
+		if max > 256 {
+			max = 256
+		}
 	}
-	n := runtime.NumCPU() * 8
-	if n < 8 {
-		n = 8
+	// A neutral starting limit for the brief window before the controller's first
+	// tick (and for copies too short for it to engage); the controller resizes
+	// from here based on device class and measured throughput.
+	initial = 2 * runtime.NumCPU()
+	if initial < 4 {
+		initial = 4
 	}
-	if n > 256 {
-		n = 256
+	if initial > max {
+		initial = max
 	}
-	return n, n
+	return max, initial
 }
 
 func (r *runner) worker() {
