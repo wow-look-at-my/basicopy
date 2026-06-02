@@ -115,6 +115,8 @@ is announced on stderr.
   high-latency network targets.
 - Native fast-copy primitives on macOS (`clonefile`) and Windows (`CopyFileEx`,
   ReFS block clone) and their device classification.
+- `O_DIRECT` (page-cache-bypassing) reads/writes — needs aligned-buffer handling
+  before it's worth a flag.
 - Live JSON progress events (only the final `--json` summary is emitted today).
 
 See `internal/` for the implementation: `engine` (orchestration + workers),

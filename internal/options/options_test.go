@@ -2,14 +2,15 @@ package options
 
 import (
 	"testing"
+
 	"github.com/wow-look-at-my/testify/assert"
 )
 
 func TestParseSize(t *testing.T) {
 	cases := []struct {
-		in	string
-		want	int64
-		ok	bool
+		in   string
+		want int64
+		ok   bool
 	}{
 		{"", 0, true},
 		{"0", 0, true},
@@ -32,13 +33,15 @@ func TestParseSize(t *testing.T) {
 		{"-5", 0, false},
 	}
 	for _, c := range cases {
-		got, err := ParseSize(c.in)
-		assert.False(t, c.ok && err != nil)
-
-		assert.False(t, !c.ok && err == nil)
-
-		assert.False(t, c.ok && got != c.want)
-
+		t.Run(c.in, func(t *testing.T) {
+			got, err := ParseSize(c.in)
+			if c.ok {
+				assert.NoError(t, err)
+				assert.Equal(t, c.want, got)
+			} else {
+				assert.Error(t, err)
+			}
+		})
 	}
 }
 
@@ -48,9 +51,9 @@ func baseValid() Options {
 
 func TestValidate(t *testing.T) {
 	cases := []struct {
-		name	string
-		mod	func(*Options)
-		ok	bool
+		name string
+		mod  func(*Options)
+		ok   bool
 	}{
 		{"valid target-dir", func(o *Options) {}, true},
 		{"valid target-file", func(o *Options) { o.TargetDir = ""; o.TargetFile = "f" }, true},
@@ -65,12 +68,14 @@ func TestValidate(t *testing.T) {
 		{"negative threads", func(o *Options) { o.MaxThreads = -1 }, false},
 	}
 	for _, c := range cases {
-		o := baseValid()
-		c.mod(&o)
-		err := o.Validate()
-		assert.False(t, c.ok && err != nil)
-
-		assert.False(t, !c.ok && err == nil)
-
+		t.Run(c.name, func(t *testing.T) {
+			o := baseValid()
+			c.mod(&o)
+			if c.ok {
+				assert.NoError(t, o.Validate())
+			} else {
+				assert.Error(t, o.Validate())
+			}
+		})
 	}
 }

@@ -29,7 +29,6 @@ type Options struct {
 	// Scaling / performance. These are escape hatches; the tool self-tunes.
 	MaxThreads int   // optional hard cap on the autoscaler; 0 = auto.
 	BufferSize int64 // override the device-adaptive buffer size; 0 = auto.
-	Direct     bool  // O_DIRECT, bypass the page cache (advanced).
 
 	// Selection.
 	Exclude       []string // glob patterns to skip.

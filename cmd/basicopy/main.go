@@ -57,7 +57,6 @@ func init() {
 	// Scaling / performance (the tool self-tunes; these are escape hatches).
 	f.IntVar(&opts.MaxThreads, "max-threads", 0, "optional hard cap on the autoscaler (0 = auto)")
 	f.StringVar(&bufferStr, "buffer", "", "override the device-adaptive buffer size (e.g. 4MiB)")
-	f.BoolVar(&opts.Direct, "direct", false, "use O_DIRECT, bypassing the page cache (advanced)")
 
 	// Selection.
 	f.StringArrayVar(&opts.Exclude, "exclude", nil, "skip paths matching this glob (repeatable)")

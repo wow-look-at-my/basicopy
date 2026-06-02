@@ -58,9 +58,16 @@ func isSparse(info os.FileInfo) bool {
 // call is unsupported for this pair (cross-fs, old kernel, special file) and the
 // caller should fall back; it only reports unsupported before any bytes move.
 func copyFileRange(dst, src *os.File, size int64) (copied int64, ok bool, err error) {
+	// Cap each call so the int64->int conversion can't overflow on 32-bit
+	// platforms (or for multi-GB files); the loop handles the remainder.
+	const maxChunk = 1 << 30 // 1 GiB
 	remaining := size
 	for remaining > 0 {
-		n, e := unix.CopyFileRange(int(src.Fd()), nil, int(dst.Fd()), nil, int(remaining), 0)
+		chunk := remaining
+		if chunk > maxChunk {
+			chunk = maxChunk
+		}
+		n, e := unix.CopyFileRange(int(src.Fd()), nil, int(dst.Fd()), nil, int(chunk), 0)
 		if e != nil {
 			if copied == 0 {
 				switch e {
