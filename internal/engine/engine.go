@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/options"
@@ -65,13 +66,14 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		}
 	}()
 
-	controlStop := make(chan struct{})
+	stopBg := make(chan struct{})
 	if !opts.DryRun {
 		for i := 0; i < maxW; i++ {
 			r.wg.Add(1)
 			go r.worker()
 		}
-		go r.runController(ctx, controlStop)
+		go r.runController(ctx, stopBg)
+		go r.runWatchdog(ctx, stopBg)
 	}
 
 	err := r.walk(ctx)
@@ -79,7 +81,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	close(r.jobs)
 	if !opts.DryRun {
 		r.wg.Wait()
-		close(controlStop)
+		close(stopBg)
 	}
 	close(stopWatch)
 
@@ -173,9 +175,34 @@ func (r *runner) worker() {
 	}
 }
 
-// copyOne performs a single file copy and records stats. Safe for concurrent use.
+// Retry tunables (vars so tests can shorten them).
+var (
+	maxRetries     = 3
+	retryBaseDelay = 100 * time.Millisecond
+)
+
+func retryBackoff(attempt int) time.Duration {
+	d := retryBaseDelay << attempt
+	if d > 2*time.Second {
+		d = 2 * time.Second
+	}
+	return d
+}
+
+// copyOne performs a single file copy and records stats, retrying transient
+// errors a few times with short backoff. Safe for concurrent use.
 func (r *runner) copyOne(job fileJob) {
-	n, err := fsx.CopyFile(job.src, job.dst, job.info, r.copyOpts)
+	var (
+		n   int64
+		err error
+	)
+	for attempt := 0; ; attempt++ {
+		n, err = fsx.CopyFile(job.src, job.dst, job.info, r.copyOpts)
+		if err == nil || attempt >= maxRetries || !retryable(err) || r.abortErr() != nil {
+			break
+		}
+		time.Sleep(retryBackoff(attempt))
+	}
 	if err != nil {
 		r.fail(err)
 		return

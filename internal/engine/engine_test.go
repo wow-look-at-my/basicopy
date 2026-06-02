@@ -301,7 +301,9 @@ func TestMirrorDeletesExtraneous(t *testing.T) {
 func TestAutoscaleControllerRuns(t *testing.T) {
 	old := controlInterval
 	controlInterval = time.Millisecond
-	defer func() { controlInterval = old }()
+	oldW := watchInterval
+	watchInterval = time.Millisecond
+	defer func() { controlInterval = old; watchInterval = oldW }()
 
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
