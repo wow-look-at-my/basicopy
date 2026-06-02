@@ -29,6 +29,7 @@ type Summary struct {
 	Dirs     int64
 	Symlinks int64
 	Linked   int64 // hardlinks preserved
+	Deleted  int64 // extraneous destination entries removed (--mirror)
 	Bytes    int64
 	Skipped  int64
 	Failed   int64
@@ -89,6 +90,9 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		r.applyHardlinks()
 		r.applyDirMeta()
 	}
+	if opts.Mirror {
+		r.mirrorExtraneous()
+	}
 	return r.summary(), err
 }
 
@@ -114,7 +118,7 @@ type runner struct {
 	stdout io.Writer
 	stderr io.Writer
 
-	files, dirs, symlinks, bytes, skipped, failed, linked atomic.Int64
+	files, dirs, symlinks, bytes, skipped, failed, linked, deleted atomic.Int64
 
 	abortMu sync.Mutex
 	aborted error
@@ -501,6 +505,7 @@ func (r *runner) summary() *Summary {
 		Dirs:     r.dirs.Load(),
 		Symlinks: r.symlinks.Load(),
 		Linked:   r.linked.Load(),
+		Deleted:  r.deleted.Load(),
 		Bytes:    r.bytes.Load(),
 		Skipped:  r.skipped.Load(),
 		Failed:   r.failed.Load(),
@@ -534,6 +539,45 @@ func (r *runner) verbose(format string, a ...any) {
 	r.outMu.Lock()
 	fmt.Fprintf(r.stdout, format+"\n", a...)
 	r.outMu.Unlock()
+}
+
+// mirrorExtraneous deletes destination entries that have no counterpart in the
+// source (the --mirror / robocopy /MIR behavior). It runs after copying so the
+// destination already reflects the source's content.
+func (r *runner) mirrorExtraneous() {
+	for _, src := range r.opts.Sources {
+		base := filepath.Base(filepath.Clean(src))
+		r.mirrorDir(filepath.Join(r.opts.TargetDir, base), src)
+	}
+}
+
+func (r *runner) mirrorDir(destDir, srcDir string) {
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		return // destDir isn't a directory (e.g. a file source) or doesn't exist
+	}
+	for _, e := range entries {
+		destPath := filepath.Join(destDir, e.Name())
+		srcPath := filepath.Join(srcDir, e.Name())
+		if _, err := os.Lstat(srcPath); err != nil {
+			// No source counterpart -> extraneous; remove it.
+			if r.opts.DryRun {
+				r.deleted.Add(1)
+				r.verbose("would delete %s", destPath)
+				continue
+			}
+			if err := os.RemoveAll(destPath); err != nil {
+				r.fail(fmt.Errorf("delete %s: %w", destPath, err))
+				continue
+			}
+			r.deleted.Add(1)
+			r.verbose("deleted %s", destPath)
+			continue
+		}
+		if e.IsDir() {
+			r.mirrorDir(destPath, srcPath)
+		}
+	}
 }
 
 func (r *runner) setRootDev(fi os.FileInfo) {
