@@ -4,6 +4,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +15,16 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/options"
 	"golang.org/x/sys/unix"
 )
+
+// TestNoSpaceAbortsRun checks that a full destination (ENOSPC) aborts the whole
+// run rather than being isolated as a single-file failure -- otherwise a backup
+// to a too-small target would pointlessly fail every remaining file.
+func TestNoSpaceAbortsRun(t *testing.T) {
+	r := &runner{opts: &options.Options{}, stderr: io.Discard}
+	r.fail(fmt.Errorf("copy big.bin: %w", unix.ENOSPC))
+	assert.Error(t, r.abortErr(), "a full destination must abort the run")
+	assert.EqualValues(t, 1, r.failed.Load())
+}
 
 func TestSpecialFileSkipped(t *testing.T) {
 	root := t.TempDir()

@@ -17,3 +17,9 @@ func TestRetryable(t *testing.T) {
 	assert.False(t, retryable(errors.New("permanent failure")))
 	assert.False(t, retryable(nil))
 }
+
+func TestIsNoSpace(t *testing.T) {
+	assert.True(t, isNoSpace(fmt.Errorf("write big.bin: %w", unix.ENOSPC)), "wrapped ENOSPC is a full disk")
+	assert.False(t, isNoSpace(unix.EAGAIN), "a transient error is not disk-full")
+	assert.False(t, isNoSpace(nil))
+}

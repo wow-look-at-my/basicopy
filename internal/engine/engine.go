@@ -536,7 +536,13 @@ func (r *runner) fail(err error) {
 	}
 	r.failed.Add(1)
 	r.elog("basicopy: error: %v", err)
-	if r.opts.FatalErrors {
+	switch {
+	case isNoSpace(err):
+		// The destination is full: every remaining file would fail the same way,
+		// so stop the whole run now instead of grinding through the rest of the
+		// tree and reporting thousands of identical ENOSPC failures.
+		r.setAbort(fmt.Errorf("destination is out of space: %w", err))
+	case r.opts.FatalErrors:
 		r.setAbort(err)
 	}
 }
