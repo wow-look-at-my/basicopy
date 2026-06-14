@@ -54,6 +54,11 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 			BufSize:  int(opts.BufferSize),
 		},
 	}
+	// Stream per-chunk byte progress into a live counter so the watchdog, progress
+	// line, and autoscaler see a large file advancing mid-copy — not a flat line
+	// until it finishes. Summary bytes stay sourced from completed copies (so a
+	// retried file isn't double-counted); moved is monotonic and for liveness only.
+	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
 
 	// Cancel the run if the context is cancelled (Ctrl-C); crash-safe temp files
 	// are cleaned up by fsx.CopyFile's deferred removal.
@@ -127,6 +132,19 @@ type runner struct {
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted atomic.Int64
 
+	// moved is a monotonic count of bytes written across all in-flight and
+	// completed copies (updated mid-copy via copyOpts.Progress). It is the
+	// liveness/throughput signal for the watchdog, progress line, and autoscaler;
+	// bytes (above) remains the authoritative completed-byte total for the summary.
+	moved atomic.Int64
+
+	// Pre-write space guard: freeBytes tracks the destination's remaining space
+	// (seeded by initSpaceGuard via statfs, then decremented per file) so copyOne
+	// can refuse a file that would not fit and stop the run before an ENOSPC write.
+	// spaceCheck is false when the figure can't be read (the guard is then off).
+	freeBytes  atomic.Int64
+	spaceCheck bool
+
 	abortMu sync.Mutex
 	aborted error
 
@@ -197,6 +215,9 @@ func retryBackoff(attempt int) time.Duration {
 // copyOne performs a single file copy and records stats, retrying transient
 // errors a few times with short backoff. Safe for concurrent use.
 func (r *runner) copyOne(job fileJob) {
+	if !r.reserveSpace(job.dst, job.info.Size()) {
+		return // destination is full; the run has been aborted
+	}
 	var (
 		n   int64
 		err error
@@ -236,6 +257,7 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 	if err := r.ensureRoot(filepath.Dir(r.opts.TargetFile)); err != nil {
 		return err
 	}
+	r.initSpaceGuard(filepath.Dir(r.opts.TargetFile))
 	r.setRootDev(fi)
 	rootAbs, _ := filepath.Abs(filepath.Dir(src))
 	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi)
@@ -270,6 +292,7 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 		if err := r.ensureRoot(r.opts.TargetDir); err != nil {
 			return err
 		}
+		r.initSpaceGuard(r.opts.TargetDir)
 		r.setRootDev(fi)
 		rootAbs, _ := filepath.Abs(clean)
 		r.visit(ctx, src, dstPath, rootAbs, fi)
@@ -535,7 +558,13 @@ func (r *runner) fail(err error) {
 	}
 	r.failed.Add(1)
 	r.elog("basicopy: error: %v", err)
-	if r.opts.FatalErrors {
+	switch {
+	case isNoSpace(err):
+		// The destination is full: every remaining file would fail the same way,
+		// so stop the whole run now instead of grinding through the rest of the
+		// tree and reporting thousands of identical ENOSPC failures.
+		r.setAbort(fmt.Errorf("destination is out of space: %w", err))
+	case r.opts.FatalErrors:
 		r.setAbort(err)
 	}
 }

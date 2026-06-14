@@ -20,6 +20,14 @@ type CopyOptions struct {
 	Preserve bool // preserve mode/times/owner (and later xattr/ACL).
 	Fsync    bool // fsync the temp file before the atomic rename.
 	BufSize  int  // copy buffer size; <= 0 uses DefaultBufSize.
+
+	// Progress, if non-nil, is called with the number of bytes newly written as
+	// a copy proceeds — usually many times for a large file. It exists so callers
+	// can observe live throughput and detect a genuine stall while a big file is
+	// in flight (rather than only learning the file's size once it finishes). It
+	// may be called from the copying goroutine many times per file, so a shared
+	// implementation must be safe for concurrent use.
+	Progress func(n int64)
 }
 
 // CopyFile copies the regular file at src to dst, crash-safely: the bytes are
@@ -52,12 +60,12 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 		}
 	}()
 
-	n, err := copyData(tmp, in, info, o.BufSize)
+	n, err := copyData(tmp, in, info, o.BufSize, o.Progress)
 	if err != nil {
 		return n, fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 
-	if err := tmp.Chmod(perm); err != nil {
+	if err := tmp.Chmod(perm); err != nil && !metaUnsupported(err) {
 		return n, fmt.Errorf("chmod %s: %w", tmpName, err)
 	}
 	if o.Preserve && info != nil {
@@ -94,10 +102,33 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 
 // plainCopy is the portable buffered fallback: a straight streamed copy from the
 // current offsets of src to dst. It is shared by the platform copyData functions.
-func plainCopy(dst, src *os.File, bufSize int) (int64, error) {
+// When progress is non-nil it is called with each chunk's byte count as the copy
+// proceeds; the source is wrapped so progress is reported regardless of whether
+// io.CopyBuffer takes its buffered path or an os.File ReadFrom fast path.
+func plainCopy(dst, src *os.File, bufSize int, progress func(int64)) (int64, error) {
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize
 	}
 	buf := make([]byte, bufSize)
-	return io.CopyBuffer(dst, src, buf)
+	var r io.Reader = src
+	if progress != nil {
+		r = progressReader{r: src, progress: progress}
+	}
+	return io.CopyBuffer(dst, r, buf)
+}
+
+// progressReader reports the size of each read through it via progress. It is used
+// to surface live copy progress for buffered copies; because it does not implement
+// io.WriterTo, every byte still flows through Read where it can be counted.
+type progressReader struct {
+	r        io.Reader
+	progress func(int64)
+}
+
+func (p progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.progress(int64(n))
+	}
+	return n, err
 }

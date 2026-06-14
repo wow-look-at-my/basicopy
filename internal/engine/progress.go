@@ -38,7 +38,7 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 	defer ticker.Stop()
 
 	var rate float64
-	prevBytes := r.bytes.Load()
+	prevBytes := r.moved.Load()
 	prevTime := time.Now()
 
 	for {
@@ -50,14 +50,14 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 			r.clearProgressLine()
 			return
 		case now := <-ticker.C:
-			nb := r.bytes.Load()
+			nb := r.moved.Load()
 			if dt := now.Sub(prevTime).Seconds(); dt > 0 {
 				rate = 0.4*float64(nb-prevBytes)/dt + 0.6*rate
 			}
 			prevBytes, prevTime = nb, now
 			r.outMu.Lock()
 			fmt.Fprintf(r.stderr, "\r\033[K%d files, %s, %s/s",
-				r.files.Load(), fmtBytes(r.bytes.Load()), fmtBytes(int64(rate)))
+				r.files.Load(), fmtBytes(nb), fmtBytes(int64(rate)))
 			r.outMu.Unlock()
 		}
 	}

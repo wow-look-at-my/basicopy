@@ -1,6 +1,8 @@
 package fsx
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,7 +88,7 @@ func TestPlainCopyDirect(t *testing.T) {
 	out, err := os.Create(filepath.Join(dir, "b"))
 	require.NoError(t, err)
 
-	n, err := plainCopy(out, in, 4) // tiny buffer forces the copy loop
+	n, err := plainCopy(out, in, 4, nil) // tiny buffer forces the copy loop
 	require.NoError(t, err)
 	assert.EqualValues(t, len(want), n)
 	require.NoError(t, out.Close())
@@ -94,6 +96,69 @@ func TestPlainCopyDirect(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(dir, "b"))
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+// TestPlainCopyProgress checks that the buffered path reports incremental
+// progress: a file larger than the copy's internal chunk fires the callback more
+// than once, and the reported bytes sum to the file size.
+func TestPlainCopyProgress(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a")
+	want := make([]byte, 1<<20) // 1 MiB -> many reads through the copy loop
+	for i := range want {
+		want[i] = byte(i)
+	}
+	require.NoError(t, os.WriteFile(src, want, 0o644))
+
+	in, err := os.Open(src)
+	require.NoError(t, err)
+	defer in.Close()
+	out, err := os.Create(filepath.Join(dir, "b"))
+	require.NoError(t, err)
+	defer out.Close()
+
+	var total int64
+	var calls int
+	n, err := plainCopy(out, in, 64<<10, func(d int64) { total += d; calls++ })
+	require.NoError(t, err)
+	assert.EqualValues(t, len(want), n)
+	assert.EqualValues(t, len(want), total, "progress must sum to bytes copied")
+	assert.Greater(t, calls, 1, "a multi-chunk copy must report progress incrementally")
+}
+
+// TestCopyFileReportsProgress checks that CopyFile threads its Progress callback
+// through whichever copy path runs, and that the callback accounts for the whole
+// file.
+func TestCopyFileReportsProgress(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	data := make([]byte, 256*1024) // larger than the default read chunk
+	for i := range data {
+		data[i] = byte(i*31 + 5)
+	}
+	require.NoError(t, os.WriteFile(src, data, 0o644))
+	info, err := os.Lstat(src)
+	require.NoError(t, err)
+
+	var total int64
+	dst := filepath.Join(dir, "dst.bin")
+	n, err := CopyFile(src, dst, info, CopyOptions{Progress: func(d int64) { total += d }})
+	require.NoError(t, err)
+	assert.EqualValues(t, len(data), n)
+	assert.EqualValues(t, n, total, "progress callback must account for every copied byte")
+}
+
+// TestMetaUnsupported checks the predicate that lets metadata preservation skip
+// operations a destination filesystem cannot perform (FAT/exFAT/NTFS), so a copy
+// whose data succeeded is never discarded over a chmod/chown/utimes failure.
+func TestMetaUnsupported(t *testing.T) {
+	assert.True(t, metaUnsupported(errors.ErrUnsupported))
+	// Real callers wrap the syscall error (e.g. with the path); errors.Is must
+	// still see through the wrapping.
+	assert.True(t, metaUnsupported(fmt.Errorf("chmod /mnt/x: %w", errors.ErrUnsupported)))
+	assert.False(t, metaUnsupported(nil))
+	assert.False(t, metaUnsupported(errors.New("some other failure")))
+	assert.False(t, metaUnsupported(os.ErrPermission))
 }
 
 func TestCopyFileFsync(t *testing.T) {
