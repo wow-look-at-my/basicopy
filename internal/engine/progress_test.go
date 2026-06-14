@@ -42,6 +42,21 @@ func TestProgressLineUsesFileTotalsForZeroByteWork(t *testing.T) {
 	assert.Contains(t, line, "ETA 0s")
 }
 
+func TestProgressLineShowsMetadataTail(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
+	r.files.Store(10)
+	r.totalFiles.Store(10)
+	r.totalBytes.Store(100)
+	r.dirMetaDone.Store(3)
+	r.dirMetaTotal.Store(8)
+
+	line := r.progressLine(100, 0, startedAt.Add(time.Second))
+
+	assert.Contains(t, line, "metadata 3/8 dirs")
+	assert.Contains(t, line, "37.5%")
+}
+
 func TestDiscoveryTotalsCountQueuedCopyWork(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
@@ -64,8 +79,8 @@ func TestDiscoveryTotalsCountQueuedCopyWork(t *testing.T) {
 	skipInfo, err := os.Stat(skipMe)
 	require.NoError(t, err)
 
-	r.handleRegular(skipMe, filepath.Join(dst, "skip.txt"), skipInfo)
-	r.handleRegular(copyMe, filepath.Join(dst, "copy.txt"), copyInfo)
+	r.handleRegular(skipMe, filepath.Join(dst, "skip.txt"), skipInfo, nil)
+	r.handleRegular(copyMe, filepath.Join(dst, "copy.txt"), copyInfo, nil)
 
 	assert.EqualValues(t, 1, r.totalFiles.Load())
 	assert.EqualValues(t, len("copy"), r.totalBytes.Load())

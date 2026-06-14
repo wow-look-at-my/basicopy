@@ -40,7 +40,8 @@ func (d *stallDetector) update(progress int64, now time.Time) (stalled bool) {
 func (r *runner) progressCount() int64 {
 	return r.moved.Load() + r.totalBytes.Load() + r.totalFiles.Load() +
 		r.files.Load() + r.dirs.Load() + r.symlinks.Load() +
-		r.linked.Load() + r.deleted.Load() + r.skipped.Load()
+		r.linked.Load() + r.deleted.Load() + r.skipped.Load() +
+		r.dirMetaDone.Load()
 }
 
 // runWatchdog watches for a total lack of forward progress and, after stallTimeout,
