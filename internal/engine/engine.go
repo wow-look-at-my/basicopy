@@ -44,6 +44,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		opts:        opts,
 		stdout:      os.Stdout,
 		stderr:      os.Stderr,
+		startedAt:   time.Now(),
 		onStack:     map[string]bool{},
 		hardlinkMap: map[string]string{},
 		gate:        newGate(maxW, initW),
@@ -141,9 +142,10 @@ type runner struct {
 
 	bgWg sync.WaitGroup // background goroutines: controller, watchdog, progress
 
-	outMu  sync.Mutex
-	stdout io.Writer
-	stderr io.Writer
+	outMu     sync.Mutex
+	stdout    io.Writer
+	stderr    io.Writer
+	startedAt time.Time
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted atomic.Int64
 	dirMetaTotal, dirMetaDone                                      atomic.Int64
