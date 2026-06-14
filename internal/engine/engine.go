@@ -41,13 +41,13 @@ type Summary struct {
 func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	maxW, initW := workerCount(opts)
 	r := &runner{
-		opts:    opts,
+		opts:        opts,
 		stdout:      os.Stdout,
 		stderr:      os.Stderr,
 		onStack:     map[string]bool{},
 		hardlinkMap: map[string]string{},
 		gate:        newGate(maxW, initW),
-		jobs:    make(chan fileJob, 1024),
+		jobs:        make(chan fileJob, 1024),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
 			Fsync:    opts.Fsync,
@@ -107,6 +107,7 @@ type fileJob struct {
 }
 
 type dirMetaEnt struct {
+	src  string
 	dst  string
 	info os.FileInfo
 }
@@ -242,9 +243,6 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 }
 
 func (r *runner) walkTargetDir(ctx context.Context) error {
-	if err := r.ensureRoot(r.opts.TargetDir); err != nil {
-		return err
-	}
 	for _, src := range r.opts.Sources {
 		if r.abortErr() != nil {
 			break
@@ -260,9 +258,21 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 			r.fail(err)
 			continue
 		}
+		dstPath := filepath.Join(r.opts.TargetDir, base)
+		if fi.IsDir() {
+			srcAbs, srcErr := filepath.Abs(clean)
+			dstAbs, dstErr := filepath.Abs(dstPath)
+			if srcErr == nil && dstErr == nil && withinRoot(srcAbs, dstAbs) {
+				r.fail(fmt.Errorf("destination %q is inside source %q", dstPath, src))
+				continue
+			}
+		}
+		if err := r.ensureRoot(r.opts.TargetDir); err != nil {
+			return err
+		}
 		r.setRootDev(fi)
 		rootAbs, _ := filepath.Abs(clean)
-		r.visit(ctx, src, filepath.Join(r.opts.TargetDir, base), rootAbs, fi)
+		r.visit(ctx, src, dstPath, rootAbs, fi)
 	}
 	return nil
 }
@@ -347,7 +357,7 @@ func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string
 			r.fail(fmt.Errorf("mkdir %s: %w", dstDir, err))
 			return
 		}
-		r.dirMeta = append(r.dirMeta, dirMetaEnt{dst: dstDir, info: fi})
+		r.dirMeta = append(r.dirMeta, dirMetaEnt{src: srcDir, dst: dstDir, info: fi})
 	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
@@ -385,7 +395,7 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 		return
 	}
 	if r.opts.NoFollowSymlinks {
-		r.recreateSymlink(target, dstPath, fi)
+		r.recreateSymlink(srcPath, target, dstPath, fi)
 		return
 	}
 
@@ -401,14 +411,14 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 	tfi, statErr := os.Stat(srcPath) // follows the link
 	if statErr != nil {
 		r.warn("dangling symlink %s -> %s (kept as link)", srcPath, target)
-		r.recreateSymlink(target, dstPath, fi)
+		r.recreateSymlink(srcPath, target, dstPath, fi)
 		return
 	}
 	if !withinRoot(srcRootAbs, targetAbs) {
 		if !r.opts.NoSymlinkWarnings {
 			r.warn("symlink %s -> %s points outside the source tree (kept as link)", srcPath, target)
 		}
-		r.recreateSymlink(target, dstPath, fi)
+		r.recreateSymlink(srcPath, target, dstPath, fi)
 		return
 	}
 
@@ -435,7 +445,7 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 	}
 }
 
-func (r *runner) recreateSymlink(target, dstPath string, fi os.FileInfo) {
+func (r *runner) recreateSymlink(srcPath, target, dstPath string, fi os.FileInfo) {
 	if r.opts.DryRun {
 		r.symlinks.Add(1)
 		r.verbose("would link %s -> %s", dstPath, target)
@@ -446,7 +456,7 @@ func (r *runner) recreateSymlink(target, dstPath string, fi os.FileInfo) {
 		r.fail(fmt.Errorf("symlink %s: %w", dstPath, err))
 		return
 	}
-	if err := fsx.ApplyMeta(dstPath, fi, r.copyOpts.Preserve); err != nil {
+	if err := fsx.ApplyMeta(srcPath, dstPath, fi, r.copyOpts.Preserve); err != nil {
 		r.warn("metadata on %s: %v", dstPath, err)
 	}
 	r.symlinks.Add(1)
@@ -457,7 +467,7 @@ func (r *runner) recreateSymlink(target, dstPath string, fi os.FileInfo) {
 // directory during the run don't override its restored mtime.
 func (r *runner) applyDirMeta() {
 	for _, d := range r.dirMeta {
-		if err := fsx.ApplyMeta(d.dst, d.info, r.copyOpts.Preserve); err != nil {
+		if err := fsx.ApplyMeta(d.src, d.dst, d.info, r.copyOpts.Preserve); err != nil {
 			r.warn("metadata on %s: %v", d.dst, err)
 		}
 	}
