@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/wow-look-at-my/basicopy/internal/options"
-	"github.com/wow-look-at-my/testify/assert"
 )
 
 func TestStallDetector(t *testing.T) {

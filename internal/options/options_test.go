@@ -3,7 +3,7 @@ package options
 import (
 	"testing"
 
-	"github.com/wow-look-at-my/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseSize(t *testing.T) {
