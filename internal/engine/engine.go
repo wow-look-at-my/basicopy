@@ -138,6 +138,10 @@ type runner struct {
 	// bytes (above) remains the authoritative completed-byte total for the summary.
 	moved atomic.Int64
 
+	// totalFiles/totalBytes grow as the walk discovers copy work, allowing the
+	// status line to show live total progress and ETA without blocking copying.
+	totalFiles, totalBytes atomic.Int64
+
 	// Pre-write space guard: freeBytes tracks the destination's remaining space
 	// (seeded by initSpaceGuard via statfs, then decremented per file) so copyOne
 	// can refuse a file that would not fit and stop the run before an ENOSPC write.
@@ -402,6 +406,8 @@ func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string
 }
 
 func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo) {
+	r.totalFiles.Add(1)
+	r.totalBytes.Add(fi.Size())
 	if r.opts.DryRun {
 		r.files.Add(1)
 		r.bytes.Add(fi.Size())
