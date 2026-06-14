@@ -57,20 +57,22 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 			}
 			prevBytes, prevTime = nb, now
 			r.outMu.Lock()
-			fmt.Fprintf(r.stderr, "\r\033[K%s", r.progressLine(nb, rate))
+			fmt.Fprintf(r.stderr, "\r\033[K%s", r.progressLine(nb, rate, now))
 			r.outMu.Unlock()
 		}
 	}
 }
 
-func (r *runner) progressLine(moved int64, rate float64) string {
+func (r *runner) progressLine(moved int64, currentRate float64, now time.Time) string {
 	files, totalFiles := r.files.Load(), r.totalFiles.Load()
 	totalBytes := r.totalBytes.Load()
 	displayMoved := moved
 	if totalBytes > 0 && displayMoved > totalBytes {
 		displayMoved = totalBytes
 	}
-	speed := fmt.Sprintf("%s/s", fmtBytes(int64(rate)))
+	currentSpeed := fmt.Sprintf("%s/s current", fmtBytes(int64(currentRate)))
+	avgRate := r.averageRate(moved, now)
+	avgSpeed := fmt.Sprintf("%s/s avg", fmtBytes(int64(avgRate)))
 
 	if totalBytes > 0 {
 		pct := 100 * float64(displayMoved) / float64(totalBytes)
@@ -78,11 +80,11 @@ func (r *runner) progressLine(moved int64, rate float64) string {
 			pct = 100
 		}
 		if totalFiles > 0 {
-			return fmt.Sprintf("%d/%d files, %s/%s (%.1f%%), %s, ETA %s",
-				files, totalFiles, fmtBytes(displayMoved), fmtBytes(totalBytes), pct, speed, fmtETA(totalBytes-displayMoved, rate))
+			return fmt.Sprintf("%d/%d files, %s/%s (%.1f%%), %s, %s, ETA %s",
+				files, totalFiles, fmtBytes(displayMoved), fmtBytes(totalBytes), pct, avgSpeed, currentSpeed, fmtETA(totalBytes-displayMoved, avgRate))
 		}
-		return fmt.Sprintf("%s/%s (%.1f%%), %s, ETA %s",
-			fmtBytes(displayMoved), fmtBytes(totalBytes), pct, speed, fmtETA(totalBytes-displayMoved, rate))
+		return fmt.Sprintf("%s/%s (%.1f%%), %s, %s, ETA %s",
+			fmtBytes(displayMoved), fmtBytes(totalBytes), pct, avgSpeed, currentSpeed, fmtETA(totalBytes-displayMoved, avgRate))
 	}
 
 	if totalFiles > 0 {
@@ -90,11 +92,21 @@ func (r *runner) progressLine(moved int64, rate float64) string {
 		if pct > 100 {
 			pct = 100
 		}
-		return fmt.Sprintf("%d/%d files, %s (%.1f%%), %s, ETA 0s",
-			files, totalFiles, fmtBytes(displayMoved), pct, speed)
+		return fmt.Sprintf("%d/%d files, %s (%.1f%%), %s, %s, ETA 0s",
+			files, totalFiles, fmtBytes(displayMoved), pct, avgSpeed, currentSpeed)
 	}
 
-	return fmt.Sprintf("%d files, %s, %s", files, fmtBytes(displayMoved), speed)
+	return fmt.Sprintf("%d files, %s, %s, %s", files, fmtBytes(displayMoved), avgSpeed, currentSpeed)
+}
+
+func (r *runner) averageRate(moved int64, now time.Time) float64 {
+	if moved <= 0 || r.startedAt.IsZero() {
+		return 0
+	}
+	if elapsed := now.Sub(r.startedAt).Seconds(); elapsed > 0 {
+		return float64(moved) / elapsed
+	}
+	return 0
 }
 
 func (r *runner) clearProgressLine() {
