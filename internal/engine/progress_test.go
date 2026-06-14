@@ -43,14 +43,15 @@ func TestProgressLineUsesFileTotalsForZeroByteWork(t *testing.T) {
 }
 
 func TestProgressLineShowsMetadataTail(t *testing.T) {
-	r := &runner{}
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
 	r.files.Store(10)
 	r.totalFiles.Store(10)
 	r.totalBytes.Store(100)
 	r.dirMetaDone.Store(3)
 	r.dirMetaTotal.Store(8)
 
-	line := r.progressLine(100, 0)
+	line := r.progressLine(100, 0, startedAt.Add(time.Second))
 
 	assert.Contains(t, line, "metadata 3/8 dirs")
 	assert.Contains(t, line, "37.5%")
