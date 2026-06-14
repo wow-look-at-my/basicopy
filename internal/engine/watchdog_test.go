@@ -39,3 +39,12 @@ func TestProgressCountTracksInflightBytes(t *testing.T) {
 	assert.EqualValues(t, base+(64<<20), r.progressCount(),
 		"in-flight bytes must register as forward progress")
 }
+
+func TestProgressCountTracksDiscoveredWork(t *testing.T) {
+	r := &runner{opts: &options.Options{}}
+	base := r.progressCount()
+	r.totalFiles.Add(3)
+	r.totalBytes.Add(1024)
+	assert.Greater(t, r.progressCount(), base,
+		"lookahead discovery must register as forward progress")
+}

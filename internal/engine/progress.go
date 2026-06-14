@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -56,11 +57,44 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 			}
 			prevBytes, prevTime = nb, now
 			r.outMu.Lock()
-			fmt.Fprintf(r.stderr, "\r\033[K%d files, %s, %s/s",
-				r.files.Load(), fmtBytes(nb), fmtBytes(int64(rate)))
+			fmt.Fprintf(r.stderr, "\r\033[K%s", r.progressLine(nb, rate))
 			r.outMu.Unlock()
 		}
 	}
+}
+
+func (r *runner) progressLine(moved int64, rate float64) string {
+	files, totalFiles := r.files.Load(), r.totalFiles.Load()
+	totalBytes := r.totalBytes.Load()
+	displayMoved := moved
+	if totalBytes > 0 && displayMoved > totalBytes {
+		displayMoved = totalBytes
+	}
+	speed := fmt.Sprintf("%s/s", fmtBytes(int64(rate)))
+
+	if totalBytes > 0 {
+		pct := 100 * float64(displayMoved) / float64(totalBytes)
+		if pct > 100 {
+			pct = 100
+		}
+		if totalFiles > 0 {
+			return fmt.Sprintf("%d/%d files, %s/%s (%.1f%%), %s, ETA %s",
+				files, totalFiles, fmtBytes(displayMoved), fmtBytes(totalBytes), pct, speed, fmtETA(totalBytes-displayMoved, rate))
+		}
+		return fmt.Sprintf("%s/%s (%.1f%%), %s, ETA %s",
+			fmtBytes(displayMoved), fmtBytes(totalBytes), pct, speed, fmtETA(totalBytes-displayMoved, rate))
+	}
+
+	if totalFiles > 0 {
+		pct := 100 * float64(files) / float64(totalFiles)
+		if pct > 100 {
+			pct = 100
+		}
+		return fmt.Sprintf("%d/%d files, %s (%.1f%%), %s, ETA 0s",
+			files, totalFiles, fmtBytes(displayMoved), pct, speed)
+	}
+
+	return fmt.Sprintf("%d files, %s, %s", files, fmtBytes(displayMoved), speed)
 }
 
 func (r *runner) clearProgressLine() {
@@ -70,6 +104,9 @@ func (r *runner) clearProgressLine() {
 }
 
 func fmtBytes(n int64) string {
+	if n < 0 {
+		n = 0
+	}
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
@@ -80,4 +117,34 @@ func fmtBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func fmtETA(remaining int64, rate float64) string {
+	if remaining <= 0 {
+		return "0s"
+	}
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return "--"
+	}
+	return fmtDuration(time.Duration(float64(remaining) / rate * float64(time.Second)))
+}
+
+func fmtDuration(d time.Duration) string {
+	if d < time.Second {
+		d = time.Second
+	}
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	d -= time.Duration(h) * time.Hour
+	m := int(d / time.Minute)
+	d -= time.Duration(m) * time.Minute
+	s := int(d / time.Second)
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
+	case m > 0:
+		return fmt.Sprintf("%dm%02ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
 }
