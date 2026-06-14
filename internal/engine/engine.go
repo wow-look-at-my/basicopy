@@ -41,19 +41,24 @@ type Summary struct {
 func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	maxW, initW := workerCount(opts)
 	r := &runner{
-		opts:    opts,
+		opts:        opts,
 		stdout:      os.Stdout,
 		stderr:      os.Stderr,
 		onStack:     map[string]bool{},
 		hardlinkMap: map[string]string{},
 		gate:        newGate(maxW, initW),
-		jobs:    make(chan fileJob, 1024),
+		jobs:        make(chan fileJob, 1024),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
 			Fsync:    opts.Fsync,
 			BufSize:  int(opts.BufferSize),
 		},
 	}
+	// Stream per-chunk byte progress into a live counter so the watchdog, progress
+	// line, and autoscaler see a large file advancing mid-copy — not a flat line
+	// until it finishes. Summary bytes stay sourced from completed copies (so a
+	// retried file isn't double-counted); moved is monotonic and for liveness only.
+	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
 
 	// Cancel the run if the context is cancelled (Ctrl-C); crash-safe temp files
 	// are cleaned up by fsx.CopyFile's deferred removal.
@@ -125,6 +130,12 @@ type runner struct {
 	stderr io.Writer
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted atomic.Int64
+
+	// moved is a monotonic count of bytes written across all in-flight and
+	// completed copies (updated mid-copy via copyOpts.Progress). It is the
+	// liveness/throughput signal for the watchdog, progress line, and autoscaler;
+	// bytes (above) remains the authoritative completed-byte total for the summary.
+	moved atomic.Int64
 
 	abortMu sync.Mutex
 	aborted error

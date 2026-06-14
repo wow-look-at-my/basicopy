@@ -37,14 +37,14 @@ type Controller struct {
 	min, max int
 	w        int
 
-	ema    float64
-	emaSet bool
-	refT   float64 // throughput at the W we last grew from (climb comparison)
-	peakT  float64 // best plateau throughput seen (trim comparison)
-	prevW  int     // W before the current tentative change
-	ph     phase
-	dwell  int // ticks to wait after a change for throughput to stabilize
-	hold   int // ticks spent holding since the last probe
+	ema     float64
+	emaSet  bool
+	refT    float64 // throughput at the W we last grew from (climb comparison)
+	peakT   float64 // best plateau throughput seen (trim comparison)
+	prevW   int     // W before the current tentative change
+	ph      phase
+	dwell   int // ticks to wait after a change for throughput to stabilize
+	hold    int // ticks spent holding since the last probe
 	probeUp bool
 
 	// Tunables (exported for testing/override).
@@ -72,12 +72,12 @@ func New(min, max, start int) *Controller {
 	}
 	return &Controller{
 		min: min, max: max, w: start, prevW: start,
-		ph:      climbing,
-		Alpha:   0.35,
-		Margin:  0.06,
-		DwellN:  2,
-		Reprobe: 8,
-		CPUCeil: 0.95,
+		ph:       climbing,
+		Alpha:    0.35,
+		Margin:   0.06,
+		DwellN:   2,
+		Reprobe:  8,
+		CPUCeil:  0.95,
 		UtilCeil: 95,
 	}
 }

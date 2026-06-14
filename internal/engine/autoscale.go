@@ -45,7 +45,7 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 
 	ticker := time.NewTicker(controlInterval)
 	defer ticker.Stop()
-	prevBytes := r.bytes.Load()
+	prevBytes := r.moved.Load()
 	prevTime := time.Now()
 
 	for {
@@ -55,7 +55,7 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case now := <-ticker.C:
-			nb := r.bytes.Load()
+			nb := r.moved.Load()
 			dt := now.Sub(prevTime).Seconds()
 			db := nb - prevBytes
 			prevBytes, prevTime = nb, now

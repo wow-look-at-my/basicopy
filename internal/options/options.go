@@ -33,7 +33,7 @@ type Options struct {
 	// Selection.
 	Exclude       []string // glob patterns to skip.
 	Include       []string // glob patterns to re-include under an exclude.
-	OneFileSystem bool      // don't cross mount points.
+	OneFileSystem bool     // don't cross mount points.
 
 	// Behavior.
 	DryRun            bool

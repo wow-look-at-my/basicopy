@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/wow-look-at-my/testify/assert"
-	"github.com/wow-look-at-my/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCopyFileSparse verifies that a sparse source is copied with identical
@@ -31,8 +31,11 @@ func TestCopyFileSparse(t *testing.T) {
 	info, err := os.Lstat(src)
 	require.NoError(t, err)
 	dst := filepath.Join(dir, "sparse.out")
-	_, err = CopyFile(src, dst, info, CopyOptions{Preserve: true})
+	var moved int64
+	_, err = CopyFile(src, dst, info, CopyOptions{Preserve: true, Progress: func(d int64) { moved += d }})
 	require.NoError(t, err)
+	assert.Positive(t, moved, "sparse copy must report progress for its data regions")
+	assert.LessOrEqual(t, moved, int64(size), "progress must not exceed the logical size")
 
 	sd, err := os.ReadFile(src)
 	require.NoError(t, err)
@@ -61,13 +64,13 @@ func TestFastPathsFallBackOnPipe(t *testing.T) {
 	require.NoError(t, err)
 	defer r1.Close()
 	defer w1.Close()
-	_, ok, _ := copyFileRange(dst, r1, 10)
+	_, ok, _ := copyFileRange(dst, r1, 10, nil)
 	assert.False(t, ok, "copy_file_range from a pipe should report unsupported")
 
 	r2, w2, err := os.Pipe()
 	require.NoError(t, err)
 	defer r2.Close()
 	defer w2.Close()
-	_, ok, _ = copySparse(dst, r2, 10, 4096)
+	_, ok, _ = copySparse(dst, r2, 10, 4096, nil)
 	assert.False(t, ok, "SEEK_DATA on a pipe should report unsupported")
 }

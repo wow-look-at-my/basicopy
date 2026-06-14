@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/basicopy/internal/options"
-	"github.com/wow-look-at-my/testify/assert"
-	"github.com/wow-look-at-my/testify/require"
 )
 
 func writeFile(t *testing.T, path string, data []byte, perm os.FileMode) {
@@ -365,9 +365,9 @@ func TestDryRunWithSymlinks(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
-	require.NoError(t, os.Symlink("a.txt", filepath.Join(src, "in.lnk")))   // in-tree -> deref
-	require.NoError(t, os.Symlink("/etc", filepath.Join(src, "out.lnk")))   // out-of-tree -> keep
-	dst := filepath.Join(root, "deep", "dst")                               // forces auto-mkdir "would create"
+	require.NoError(t, os.Symlink("a.txt", filepath.Join(src, "in.lnk"))) // in-tree -> deref
+	require.NoError(t, os.Symlink("/etc", filepath.Join(src, "out.lnk"))) // out-of-tree -> keep
+	dst := filepath.Join(root, "deep", "dst")                             // forces auto-mkdir "would create"
 	o := &options.Options{Sources: []string{src}, TargetDir: dst, DryRun: true, Verbose: true, Progress: "auto"}
 	require.NoError(t, o.Validate())
 
@@ -421,4 +421,3 @@ func TestSymlinkToParentKept(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotZero(t, li.Mode()&os.ModeSymlink, "a link to the parent is out-of-tree and must be kept")
 }
-
