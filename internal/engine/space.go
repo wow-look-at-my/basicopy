@@ -15,8 +15,8 @@ var availBytes = statfsAvail
 // instead of after one. It is a no-op (guard disabled) for a dry run or when the
 // figure cannot be read (e.g. off Unix, or a filesystem statfs rejects).
 func (r *runner) initSpaceGuard(dir string) {
-	if r.opts.DryRun {
-		return
+	if r.opts.DryRun || r.spaceCheck {
+		return // dry runs don't write; and seed only once across multiple sources
 	}
 	if avail, ok := availBytes(dir); ok {
 		r.freeBytes.Store(avail)

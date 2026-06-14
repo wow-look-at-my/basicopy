@@ -17,28 +17,31 @@ func metaUnsupported(err error) bool {
 	return errors.Is(err, errors.ErrUnsupported)
 }
 
-// ApplyMeta applies preserved metadata (mode, owner, times) to an existing path.
-// It is used for directories and recreated symlinks; regular files get their
-// metadata applied to the temp file inside CopyFile so the rename publishes a
-// fully formed file. Mode and times are skipped for symlinks (the link itself
-// has no meaningful mode, and portable lutimes is added later). Operations the
-// destination filesystem cannot support are skipped rather than treated as
-// errors.
-func ApplyMeta(path string, info os.FileInfo, preserve bool) error {
+// ApplyMeta applies preserved metadata (mode, owner, xattrs, times) to an
+// existing path. It is used for directories and recreated symlinks; regular
+// files get their metadata applied to the temp file inside CopyFile so the rename
+// publishes a fully formed file. Mode and times are skipped for symlinks (the
+// link itself has no meaningful mode, and portable lutimes is added later).
+// Operations the destination filesystem cannot support are skipped rather than
+// treated as errors.
+func ApplyMeta(src, dst string, info os.FileInfo, preserve bool) error {
 	if !preserve || info == nil {
 		return nil
 	}
 	isSymlink := info.Mode()&os.ModeSymlink != 0
 	if !isSymlink {
-		if err := os.Chmod(path, info.Mode().Perm()); err != nil && !metaUnsupported(err) {
-			return fmt.Errorf("chmod %s: %w", path, err)
+		if err := os.Chmod(dst, info.Mode().Perm()); err != nil && !metaUnsupported(err) {
+			return fmt.Errorf("chmod %s: %w", dst, err)
 		}
 	}
-	if err := preserveOwner(path, info); err != nil {
+	if err := preserveOwner(dst, info); err != nil {
+		return err
+	}
+	if err := copyXattrs(src, dst, isSymlink); err != nil {
 		return err
 	}
 	if !isSymlink {
-		return preserveTimes(path, info)
+		return preserveTimes(dst, info)
 	}
 	return nil
 }

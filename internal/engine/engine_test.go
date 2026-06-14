@@ -418,6 +418,33 @@ func TestTargetRootUnderFileErrors(t *testing.T) {
 	assert.Error(t, err, "creating a target root beneath a file must fail")
 }
 
+func TestRejectsDestinationInsideSource(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
+	dst := filepath.Join(src, "backup")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err, "recursive target should be isolated as a failed source")
+	assert.EqualValues(t, 1, sum.Failed)
+	_, statErr := os.Stat(dst)
+	assert.True(t, os.IsNotExist(statErr), "recursive target must be rejected before creating directories")
+}
+
+func TestRejectsDestinationSameAsSource(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
+	o := &options.Options{Sources: []string{src}, TargetDir: root, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err, "self-copy target should be isolated as a failed source")
+	assert.EqualValues(t, 1, sum.Failed)
+}
+
 func TestCopyFailsOnDestCollision(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

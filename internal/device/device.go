@@ -58,6 +58,8 @@ type UtilSampler struct {
 // NewUtilSampler returns a sampler for the named device (use Info.Name).
 func NewUtilSampler(name string) *UtilSampler { return &UtilSampler{name: name} }
 
+var readIOTicksForSample = readIOTicks
+
 // Sample returns the device %util [0,100] since the previous call. The first call
 // primes the baseline and returns ok=false, as does any call when the device is
 // unknown or unsupported.
@@ -65,7 +67,7 @@ func (u *UtilSampler) Sample() (utilPct float64, ok bool) {
 	if u.name == "" {
 		return 0, false
 	}
-	ticks, ok := readIOTicks(u.name)
+	ticks, ok := readIOTicksForSample(u.name)
 	if !ok {
 		return 0, false
 	}

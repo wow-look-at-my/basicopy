@@ -58,7 +58,7 @@ go-toolchain            # tidy, test, build -> ./build/basicopy
 | Reflink / clone when possible | on | — |
 | Crash-safe temp + atomic rename | on | — |
 | Auto-create target dirs (stderr notice) | on | `--no-auto-mkdirs` |
-| Metadata preserve (mode/times/owner/xattr/ACL) | on | `--no-preserve` |
+| Metadata preserve (mode/times/owner/xattr/Linux ACL) | on | `--no-preserve` |
 | Sparse / hole-skip | on | — |
 | Skip unchanged (size+mtime) | on | `--checksum` for content (BLAKE3) |
 | Hardlinks preserved | on | `--no-hardlinks` |
@@ -101,11 +101,11 @@ is announced on stderr.
 ## Platform support
 
 - **Linux:** full depth — device classification + `%util` guard, reflink, sparse,
-  `copy_file_range`, `posix_fadvise`/`sync_file_range`, hardlink and ownership
-  preservation.
+  `copy_file_range`, `posix_fadvise`/`sync_file_range`, hardlink, ownership,
+  xattr, and POSIX ACL preservation.
 - **macOS / other Unix:** portable buffered copy with metadata/ownership/hardlink
-  preservation; the controller runs on throughput + latency + system-CPU signals
-  (no `%util`).
+  preservation; xattrs are preserved on macOS. The controller runs on throughput
+  + latency + system-CPU signals (no `%util`).
 - **Windows:** builds with the portable buffered path; native fast-copy and
   device classification are not yet implemented.
 
@@ -117,6 +117,7 @@ is announced on stderr.
   ReFS block clone) and their device classification.
 - `O_DIRECT` (page-cache-bypassing) reads/writes — needs aligned-buffer handling
   before it's worth a flag.
+- Native ACL preservation outside Linux.
 - Live JSON progress events (only the final `--json` summary is emitted today).
 
 See `internal/` for the implementation: `engine` (orchestration + workers),

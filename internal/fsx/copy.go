@@ -74,6 +74,9 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 		if err := preserveOwner(tmpName, info); err != nil {
 			return n, err
 		}
+		if err := copyXattrs(src, tmpName, false); err != nil {
+			return n, err
+		}
 	}
 	if o.Fsync {
 		if err := tmp.Sync(); err != nil {

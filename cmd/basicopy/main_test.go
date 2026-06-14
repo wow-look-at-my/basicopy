@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
+
+// newCmd returns a command with a context and output sink, mirroring how cobra
+// sets a context during ExecuteContext (a bare command's Context() is nil, which
+// engine.Run would dereference).
+func newCmd(out io.Writer) *cobra.Command {
+	c := &cobra.Command{}
+	c.SetContext(context.Background())
+	c.SetOut(out)
+	return c
+}
 
 func TestHumanBytes(t *testing.T) {
 	assert.Equal(t, "0 B", humanBytes(0))
@@ -39,8 +50,7 @@ func TestRunTextSummary(t *testing.T) {
 	require.NoError(t, o.Validate())
 
 	var out bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&out)
+	cmd := newCmd(&out)
 	require.NoError(t, run(cmd, o))
 	assert.Contains(t, out.String(), "1 files")
 }
@@ -51,8 +61,7 @@ func TestRunMirrorSummary(t *testing.T) {
 	require.NoError(t, o.Validate())
 
 	var out bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&out)
+	cmd := newCmd(&out)
 	require.NoError(t, run(cmd, o))
 	assert.Contains(t, out.String(), "deleted")
 }
@@ -63,8 +72,7 @@ func TestRunJSONSummary(t *testing.T) {
 	require.NoError(t, o.Validate())
 
 	var out bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&out)
+	cmd := newCmd(&out)
 	require.NoError(t, run(cmd, o))
 	assert.Contains(t, out.String(), `"files": 1`)
 }
@@ -78,8 +86,7 @@ func TestRunReportsFailure(t *testing.T) {
 	}
 	require.NoError(t, o.Validate())
 
-	cmd := &cobra.Command{}
-	cmd.SetOut(io.Discard)
+	cmd := newCmd(io.Discard)
 	assert.Error(t, run(cmd, o), "a failed item must yield a non-nil error (non-zero exit)")
 }
 
