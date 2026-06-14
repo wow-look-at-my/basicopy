@@ -2,8 +2,8 @@
 // sources (pipelined), and copies files concurrently through a resizable gate
 // using the fsx primitives. Directory creation and symlink handling happen on the
 // walk goroutine so a child's parent always exists before the child is scheduled;
-// directory metadata is applied after all copies complete so file writes don't
-// bump directory mtimes back.
+// directory metadata is applied once each directory's own child entries are done
+// so file writes don't bump directory mtimes back.
 package engine
 
 import (
@@ -48,6 +48,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		hardlinkMap: map[string]string{},
 		gate:        newGate(maxW, initW),
 		jobs:        make(chan fileJob, 1024),
+		metaJobs:    make(chan *dirState, 1024),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
 			Fsync:    opts.Fsync,
@@ -77,6 +78,10 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 			r.wg.Add(1)
 			go r.worker()
 		}
+		for i := 0; i < metadataWorkerCount(); i++ {
+			r.metaWg.Add(1)
+			go r.metadataWorker()
+		}
 		r.bgWg.Add(3)
 		go func() { defer r.bgWg.Done(); r.runController(ctx, stopBg) }()
 		go func() { defer r.bgWg.Done(); r.runWatchdog(ctx, stopBg) }()
@@ -88,20 +93,23 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	close(r.jobs)
 	if !opts.DryRun {
 		r.wg.Wait()
-		close(stopBg)
-		r.bgWg.Wait()
 	}
 	close(stopWatch)
 
-	if err == nil {
-		err = r.abortErr()
-	}
 	if !opts.DryRun {
 		r.applyHardlinks()
-		r.applyDirMeta()
+		close(r.metaJobs)
+		r.metaWg.Wait()
 	}
 	if opts.Mirror {
 		r.mirrorExtraneous()
+	}
+	if !opts.DryRun {
+		close(stopBg)
+		r.bgWg.Wait()
+	}
+	if err == nil {
+		err = r.abortErr()
 	}
 	return r.summary(), err
 }
@@ -109,12 +117,15 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 type fileJob struct {
 	src, dst string
 	info     os.FileInfo
+	parent   *dirState
 }
 
-type dirMetaEnt struct {
-	src  string
-	dst  string
-	info os.FileInfo
+type dirState struct {
+	src, dst string
+	info     os.FileInfo
+	pending  atomic.Int64
+	closed   atomic.Bool
+	queued   atomic.Bool
 }
 
 type runner struct {
@@ -124,6 +135,10 @@ type runner struct {
 	gate *gate
 	jobs chan fileJob
 	wg   sync.WaitGroup // copy workers
+
+	metaJobs chan *dirState
+	metaWg   sync.WaitGroup // directory metadata workers
+
 	bgWg sync.WaitGroup // background goroutines: controller, watchdog, progress
 
 	outMu  sync.Mutex
@@ -131,6 +146,7 @@ type runner struct {
 	stderr io.Writer
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted atomic.Int64
+	dirMetaTotal, dirMetaDone                                      atomic.Int64
 
 	// moved is a monotonic count of bytes written across all in-flight and
 	// completed copies (updated mid-copy via copyOpts.Progress). It is the
@@ -152,8 +168,7 @@ type runner struct {
 	abortMu sync.Mutex
 	aborted error
 
-	// Walk-goroutine-owned state (no locking needed): applied after wg.Wait.
-	dirMeta     []dirMetaEnt
+	// Walk-goroutine-owned state (no locking needed).
 	onStack     map[string]bool
 	hardlinkMap map[string]string // inode key -> first destination ("primary")
 	hardlinks   []linkEnt         // secondary links to create after all copies
@@ -161,7 +176,10 @@ type runner struct {
 	rootDevSet  bool
 }
 
-type linkEnt struct{ target, dst string }
+type linkEnt struct {
+	target, dst string
+	parent      *dirState
+}
 
 // workerCount returns the gate ceiling and its initial limit. With --max-threads
 // the count is pinned; otherwise it scales with CPU count (the M4 controller will
@@ -190,15 +208,38 @@ func workerCount(opts *options.Options) (max, initial int) {
 	return max, initial
 }
 
+func metadataWorkerCount() int {
+	n := runtime.NumCPU()
+	if n < 4 {
+		return 4
+	}
+	if n > 32 {
+		return 32
+	}
+	return n
+}
+
 func (r *runner) worker() {
 	defer r.wg.Done()
 	for job := range r.jobs {
 		if r.abortErr() != nil {
+			r.completeDirWork(job.parent)
 			continue // drain the channel without doing work
 		}
 		r.gate.acquire()
 		r.copyOne(job)
 		r.gate.release()
+		r.completeDirWork(job.parent)
+	}
+}
+
+func (r *runner) metadataWorker() {
+	defer r.metaWg.Done()
+	for d := range r.metaJobs {
+		if err := fsx.ApplyMeta(d.src, d.dst, d.info, r.copyOpts.Preserve); err != nil {
+			r.warn("metadata on %s: %v", d.dst, err)
+		}
+		r.dirMetaDone.Add(1)
 	}
 }
 
@@ -264,7 +305,7 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 	r.initSpaceGuard(filepath.Dir(r.opts.TargetFile))
 	r.setRootDev(fi)
 	rootAbs, _ := filepath.Abs(filepath.Dir(src))
-	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi)
+	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi, nil)
 	return nil
 }
 
@@ -299,14 +340,14 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 		r.initSpaceGuard(r.opts.TargetDir)
 		r.setRootDev(fi)
 		rootAbs, _ := filepath.Abs(clean)
-		r.visit(ctx, src, dstPath, rootAbs, fi)
+		r.visit(ctx, src, dstPath, rootAbs, fi, nil)
 	}
 	return nil
 }
 
 // visit dispatches a single entry. Directories and symlinks are handled on the
 // walk goroutine; regular files are queued for the worker pool.
-func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo) {
+func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo, parent *dirState) {
 	if r.abortErr() != nil {
 		return
 	}
@@ -325,7 +366,7 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 	mode := fi.Mode()
 	switch {
 	case mode&os.ModeSymlink != 0:
-		r.visitSymlink(ctx, srcPath, dstPath, srcRootAbs, fi)
+		r.visitSymlink(ctx, srcPath, dstPath, srcRootAbs, fi, parent)
 	case mode.IsDir():
 		if r.opts.OneFileSystem && r.rootDevSet {
 			if dev, ok := fileDev(fi); ok && dev != r.rootDev {
@@ -336,7 +377,7 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 		}
 		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, fi)
 	case mode.IsRegular():
-		r.handleRegular(srcPath, dstPath, fi)
+		r.handleRegular(srcPath, dstPath, fi, parent)
 	default:
 		r.note("skipping special file %s", srcPath)
 		r.skipped.Add(1)
@@ -346,7 +387,7 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 // handleRegular preserves hardlinks (default-on): the first path to a multiply-
 // linked inode is copied; subsequent paths are recorded to be link()ed to that
 // first copy after all copies finish. Single-link files are just copied.
-func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo) {
+func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
 	if scan.Unchanged(srcPath, fi, dstPath, r.opts.Checksum) {
 		r.skipped.Add(1)
 		r.verbose("skip unchanged %s", dstPath)
@@ -355,13 +396,14 @@ func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo) {
 	if !r.opts.NoHardlinks && !r.opts.DryRun {
 		if key, nlink, ok := fileKey(fi); ok && nlink > 1 {
 			if primary, seen := r.hardlinkMap[key]; seen {
-				r.hardlinks = append(r.hardlinks, linkEnt{target: primary, dst: dstPath})
+				r.addDirWork(parent)
+				r.hardlinks = append(r.hardlinks, linkEnt{target: primary, dst: dstPath, parent: parent})
 				return
 			}
 			r.hardlinkMap[key] = dstPath
 		}
 	}
-	r.enqueueFile(srcPath, dstPath, fi)
+	r.enqueueFile(srcPath, dstPath, fi, parent)
 }
 
 // applyHardlinks creates the recorded secondary hardlinks after all primary
@@ -371,10 +413,12 @@ func (r *runner) applyHardlinks() {
 		_ = os.Remove(l.dst) // tolerate a leftover from a prior run
 		if err := os.Link(l.target, l.dst); err != nil {
 			r.fail(fmt.Errorf("hardlink %s -> %s: %w", l.dst, l.target, err))
+			r.completeDirWork(l.parent)
 			continue
 		}
 		r.linked.Add(1)
 		r.verbose("%s => %s (hardlink)", l.dst, l.target)
+		r.completeDirWork(l.parent)
 	}
 }
 
@@ -384,13 +428,14 @@ func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string
 			r.fail(fmt.Errorf("mkdir %s: %w", dstDir, err))
 			return
 		}
-		r.dirMeta = append(r.dirMeta, dirMetaEnt{src: srcDir, dst: dstDir, info: fi})
 	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		r.fail(fmt.Errorf("read dir %s: %w", srcDir, err))
 		return
 	}
+	state := r.newDirState(srcDir, dstDir, fi)
+	defer r.closeDir(state)
 	r.dirs.Add(1)
 	for _, e := range entries {
 		if r.abortErr() != nil {
@@ -401,11 +446,11 @@ func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string
 			r.fail(err)
 			continue
 		}
-		r.visit(ctx, filepath.Join(srcDir, e.Name()), filepath.Join(dstDir, e.Name()), srcRootAbs, cfi)
+		r.visit(ctx, filepath.Join(srcDir, e.Name()), filepath.Join(dstDir, e.Name()), srcRootAbs, cfi, state)
 	}
 }
 
-func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo) {
+func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
 	r.totalFiles.Add(1)
 	r.totalBytes.Add(fi.Size())
 	if r.opts.DryRun {
@@ -414,10 +459,11 @@ func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo) {
 		r.verbose("would copy %s", dstPath)
 		return
 	}
-	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi}
+	r.addDirWork(parent)
+	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi, parent: parent}
 }
 
-func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo) {
+func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo, parent *dirState) {
 	target, err := os.Readlink(srcPath)
 	if err != nil {
 		r.fail(err)
@@ -467,7 +513,7 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, tfi)
 		delete(r.onStack, canon)
 	case tfi.Mode().IsRegular():
-		r.enqueueFile(srcPath, dstPath, tfi)
+		r.enqueueFile(srcPath, dstPath, tfi, parent)
 	default:
 		r.note("skipping special symlink target %s", srcPath)
 		r.skipped.Add(1)
@@ -492,13 +538,44 @@ func (r *runner) recreateSymlink(srcPath, target, dstPath string, fi os.FileInfo
 	r.verbose("%s -> %s", dstPath, target)
 }
 
-// applyDirMeta sets directory metadata after all file copies, so additions to a
-// directory during the run don't override its restored mtime.
-func (r *runner) applyDirMeta() {
-	for _, d := range r.dirMeta {
-		if err := fsx.ApplyMeta(d.src, d.dst, d.info, r.copyOpts.Preserve); err != nil {
-			r.warn("metadata on %s: %v", d.dst, err)
-		}
+func (r *runner) newDirState(src, dst string, info os.FileInfo) *dirState {
+	if r.opts.DryRun || !r.copyOpts.Preserve {
+		return nil
+	}
+	r.dirMetaTotal.Add(1)
+	return &dirState{src: src, dst: dst, info: info}
+}
+
+func (r *runner) addDirWork(d *dirState) {
+	if d != nil {
+		d.pending.Add(1)
+	}
+}
+
+func (r *runner) completeDirWork(d *dirState) {
+	if d == nil {
+		return
+	}
+	if d.pending.Add(-1) == 0 && d.closed.Load() {
+		r.queueDirMeta(d)
+	}
+}
+
+func (r *runner) closeDir(d *dirState) {
+	if d == nil {
+		return
+	}
+	d.closed.Store(true)
+	if d.pending.Load() == 0 {
+		r.queueDirMeta(d)
+	}
+}
+
+// queueDirMeta applies directory metadata as soon as this specific directory can
+// no longer have child entries created by regular copies or deferred hardlinks.
+func (r *runner) queueDirMeta(d *dirState) {
+	if d.queued.CompareAndSwap(false, true) {
+		r.metaJobs <- d
 	}
 }
 

@@ -66,11 +66,20 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 func (r *runner) progressLine(moved int64, rate float64) string {
 	files, totalFiles := r.files.Load(), r.totalFiles.Load()
 	totalBytes := r.totalBytes.Load()
+	dirMetaDone, dirMetaTotal := r.dirMetaDone.Load(), r.dirMetaTotal.Load()
 	displayMoved := moved
 	if totalBytes > 0 && displayMoved > totalBytes {
 		displayMoved = totalBytes
 	}
 	speed := fmt.Sprintf("%s/s", fmtBytes(int64(rate)))
+
+	if dirMetaTotal > 0 && dirMetaDone < dirMetaTotal &&
+		(totalFiles == 0 || files >= totalFiles) &&
+		(totalBytes == 0 || displayMoved >= totalBytes) {
+		pct := 100 * float64(dirMetaDone) / float64(dirMetaTotal)
+		return fmt.Sprintf("metadata %d/%d dirs (%.1f%%)",
+			dirMetaDone, dirMetaTotal, pct)
+	}
 
 	if totalBytes > 0 {
 		pct := 100 * float64(displayMoved) / float64(totalBytes)
