@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestClassString(t *testing.T) {
+func TestClassStringIncludesUnknownFallback(t *testing.T) {
 	assert.Equal(t, "unknown", Unknown.String())
 	assert.Equal(t, "SSD", SSD.String())
 	assert.Equal(t, "HDD", HDD.String())
