@@ -65,7 +65,7 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 		return n, fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 
-	if err := tmp.Chmod(perm); err != nil {
+	if err := tmp.Chmod(perm); err != nil && !metaUnsupported(err) {
 		return n, fmt.Errorf("chmod %s: %w", tmpName, err)
 	}
 	if o.Preserve && info != nil {

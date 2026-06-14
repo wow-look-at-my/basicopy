@@ -1,6 +1,8 @@
 package fsx
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,6 +146,19 @@ func TestCopyFileReportsProgress(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, len(data), n)
 	assert.EqualValues(t, n, total, "progress callback must account for every copied byte")
+}
+
+// TestMetaUnsupported checks the predicate that lets metadata preservation skip
+// operations a destination filesystem cannot perform (FAT/exFAT/NTFS), so a copy
+// whose data succeeded is never discarded over a chmod/chown/utimes failure.
+func TestMetaUnsupported(t *testing.T) {
+	assert.True(t, metaUnsupported(errors.ErrUnsupported))
+	// Real callers wrap the syscall error (e.g. with the path); errors.Is must
+	// still see through the wrapping.
+	assert.True(t, metaUnsupported(fmt.Errorf("chmod /mnt/x: %w", errors.ErrUnsupported)))
+	assert.False(t, metaUnsupported(nil))
+	assert.False(t, metaUnsupported(errors.New("some other failure")))
+	assert.False(t, metaUnsupported(os.ErrPermission))
 }
 
 func TestCopyFileFsync(t *testing.T) {
