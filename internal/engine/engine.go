@@ -137,6 +137,13 @@ type runner struct {
 	// bytes (above) remains the authoritative completed-byte total for the summary.
 	moved atomic.Int64
 
+	// Pre-write space guard: freeBytes tracks the destination's remaining space
+	// (seeded by initSpaceGuard via statfs, then decremented per file) so copyOne
+	// can refuse a file that would not fit and stop the run before an ENOSPC write.
+	// spaceCheck is false when the figure can't be read (the guard is then off).
+	freeBytes  atomic.Int64
+	spaceCheck bool
+
 	abortMu sync.Mutex
 	aborted error
 
@@ -207,6 +214,9 @@ func retryBackoff(attempt int) time.Duration {
 // copyOne performs a single file copy and records stats, retrying transient
 // errors a few times with short backoff. Safe for concurrent use.
 func (r *runner) copyOne(job fileJob) {
+	if !r.reserveSpace(job.dst, job.info.Size()) {
+		return // destination is full; the run has been aborted
+	}
 	var (
 		n   int64
 		err error
@@ -246,6 +256,7 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 	if err := r.ensureRoot(filepath.Dir(r.opts.TargetFile)); err != nil {
 		return err
 	}
+	r.initSpaceGuard(filepath.Dir(r.opts.TargetFile))
 	r.setRootDev(fi)
 	rootAbs, _ := filepath.Abs(filepath.Dir(src))
 	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi)
@@ -256,6 +267,7 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 	if err := r.ensureRoot(r.opts.TargetDir); err != nil {
 		return err
 	}
+	r.initSpaceGuard(r.opts.TargetDir)
 	for _, src := range r.opts.Sources {
 		if r.abortErr() != nil {
 			break

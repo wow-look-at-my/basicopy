@@ -324,6 +324,33 @@ func TestAutoscaleControllerRuns(t *testing.T) {
 	assert.EqualValues(t, 500, sum.Files)
 }
 
+func TestReserveSpaceDisabled(t *testing.T) {
+	r := &runner{opts: &options.Options{}} // spaceCheck false -> guard off
+	assert.True(t, r.reserveSpace("/dst/huge", 1<<40), "with no guard every file is allowed")
+}
+
+func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
+	old := availBytes
+	availBytes = func(string) (int64, bool) { return 100, true } // only 100 bytes free
+	defer func() { availBytes = old }()
+
+	r := &runner{opts: &options.Options{}, stderr: &bytes.Buffer{}, spaceCheck: true}
+	r.freeBytes.Store(100)
+	assert.False(t, r.reserveSpace("/dst/big.bin", 1<<20), "a file larger than free space must be refused")
+	assert.Error(t, r.abortErr(), "and the run must abort rather than attempt the write")
+}
+
+func TestReserveSpaceConfirmsRoomViaStatfs(t *testing.T) {
+	old := availBytes
+	availBytes = func(string) (int64, bool) { return 1 << 30, true } // 1 GiB really free
+	defer func() { availBytes = old }()
+
+	r := &runner{opts: &options.Options{}, spaceCheck: true}
+	r.freeBytes.Store(0) // estimate exhausted -> forces a real statfs, which finds room
+	assert.True(t, r.reserveSpace("/dst/f", 4096))
+	assert.NoError(t, r.abortErr())
+}
+
 func TestProgressAlwaysDraws(t *testing.T) {
 	oldP := progressInterval
 	progressInterval = time.Millisecond
