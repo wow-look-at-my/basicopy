@@ -70,7 +70,7 @@ func init() {
 	f.BoolVar(&opts.NoHardlinks, "no-hardlinks", false, "duplicate hardlinked files instead of preserving links")
 	f.BoolVar(&opts.NoFollowSymlinks, "no-follow-symlinks", false, "copy symlinks as links instead of dereferencing them")
 	f.BoolVar(&opts.NoSymlinkWarnings, "no-symlink-warnings", false, "suppress the stderr notice for out-of-tree symlinks")
-	f.BoolVar(&opts.NoPreserve, "no-preserve", false, "do not preserve metadata (mode/times/owner/xattr/ACL)")
+	f.BoolVar(&opts.NoPreserve, "no-preserve", false, "do not preserve metadata (mode/times/owner/xattr/Linux ACL)")
 	f.BoolVar(&opts.FatalErrors, "fatal-errors", false, "abort on the first error instead of isolate-and-continue")
 	f.BoolVar(&opts.Fsync, "fsync", false, "fsync each file before the atomic rename (durability)")
 

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/wow-look-at-my/testify/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 // curve models achievable throughput as a function of worker count: a saturating

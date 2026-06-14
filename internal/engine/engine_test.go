@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/basicopy/internal/options"
-	"github.com/wow-look-at-my/testify/assert"
-	"github.com/wow-look-at-my/testify/require"
 )
 
 func writeFile(t *testing.T, path string, data []byte, perm os.FileMode) {
@@ -365,9 +365,9 @@ func TestDryRunWithSymlinks(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
-	require.NoError(t, os.Symlink("a.txt", filepath.Join(src, "in.lnk")))   // in-tree -> deref
-	require.NoError(t, os.Symlink("/etc", filepath.Join(src, "out.lnk")))   // out-of-tree -> keep
-	dst := filepath.Join(root, "deep", "dst")                               // forces auto-mkdir "would create"
+	require.NoError(t, os.Symlink("a.txt", filepath.Join(src, "in.lnk"))) // in-tree -> deref
+	require.NoError(t, os.Symlink("/etc", filepath.Join(src, "out.lnk"))) // out-of-tree -> keep
+	dst := filepath.Join(root, "deep", "dst")                             // forces auto-mkdir "would create"
 	o := &options.Options{Sources: []string{src}, TargetDir: dst, DryRun: true, Verbose: true, Progress: "auto"}
 	require.NoError(t, o.Validate())
 
@@ -389,6 +389,33 @@ func TestTargetRootUnderFileErrors(t *testing.T) {
 
 	_, err := Run(context.Background(), o)
 	assert.Error(t, err, "creating a target root beneath a file must fail")
+}
+
+func TestRejectsDestinationInsideSource(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
+	dst := filepath.Join(src, "backup")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err, "recursive target should be isolated as a failed source")
+	assert.EqualValues(t, 1, sum.Failed)
+	_, statErr := os.Stat(dst)
+	assert.True(t, os.IsNotExist(statErr), "recursive target must be rejected before creating directories")
+}
+
+func TestRejectsDestinationSameAsSource(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
+	o := &options.Options{Sources: []string{src}, TargetDir: root, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err, "self-copy target should be isolated as a failed source")
+	assert.EqualValues(t, 1, sum.Failed)
 }
 
 func TestCopyFailsOnDestCollision(t *testing.T) {
@@ -421,4 +448,3 @@ func TestSymlinkToParentKept(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotZero(t, li.Mode()&os.ModeSymlink, "a link to the parent is out-of-tree and must be kept")
 }
-

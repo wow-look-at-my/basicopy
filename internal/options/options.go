@@ -33,7 +33,7 @@ type Options struct {
 	// Selection.
 	Exclude       []string // glob patterns to skip.
 	Include       []string // glob patterns to re-include under an exclude.
-	OneFileSystem bool      // don't cross mount points.
+	OneFileSystem bool     // don't cross mount points.
 
 	// Behavior.
 	DryRun            bool
@@ -42,7 +42,7 @@ type Options struct {
 	NoHardlinks       bool // duplicate hardlinked files instead of preserving links.
 	NoFollowSymlinks  bool // copy symlinks as links instead of dereferencing them.
 	NoSymlinkWarnings bool // suppress the stderr notice for out-of-tree symlinks.
-	NoPreserve        bool // don't preserve metadata (mode/times/owner/xattr/ACL).
+	NoPreserve        bool // don't preserve metadata (mode/times/owner/xattr/Linux ACL).
 	FatalErrors       bool // abort on the first error instead of isolate-and-continue.
 	Fsync             bool // fsync each file before the atomic rename (durability).
 
