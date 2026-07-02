@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -230,6 +231,29 @@ func TestSkipUnchangedOnRerun(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, sum2.Files, "re-run should copy nothing")
 	assert.EqualValues(t, 2, sum2.Skipped, "re-run should skip both unchanged files")
+}
+
+// TestCanceledCopyIsNotAFailure: once the run is aborting, an in-flight copy
+// interrupted via the Cancel hook must stop without being recorded as a
+// per-file failure (the abort itself is the run's error) and without
+// publishing a destination file.
+func TestCanceledCopyIsNotAFailure(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src.bin")
+	writeFile(t, src, []byte("data"), 0o644)
+	info, err := os.Lstat(src)
+	require.NoError(t, err)
+
+	r := &runner{opts: &options.Options{}, stdout: io.Discard, stderr: io.Discard}
+	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
+	r.setAbort(context.Canceled)
+
+	dst := filepath.Join(root, "dst.bin")
+	r.copyOne(fileJob{src: src, dst: dst, info: info})
+	assert.Zero(t, r.failed.Load(), "a canceled copy is not a per-file failure")
+	assert.Zero(t, r.files.Load(), "a canceled copy must not count as completed")
+	_, statErr := os.Lstat(dst)
+	assert.True(t, os.IsNotExist(statErr), "no destination file may be published")
 }
 
 // TestSkipUnchangedSymlinkTargetOnRerun guards the incremental path for

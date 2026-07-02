@@ -8,6 +8,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,6 +61,11 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	// until it finishes. Summary bytes stay sourced from completed copies (so a
 	// retried file isn't double-counted); moved is monotonic and for liveness only.
 	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
+	// Stop in-flight copies at their next chunk boundary once the run is
+	// aborting (Ctrl-C, watchdog, --fatal-errors, out of space) — without this a
+	// cancelled run would still finish every in-flight file, which for large
+	// files can take minutes.
+	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
 
 	// Cancel the run if the context is cancelled (Ctrl-C); crash-safe temp files
 	// are cleaned up by fsx.CopyFile's deferred removal.
@@ -242,6 +248,9 @@ func (r *runner) copyOne(job fileJob) {
 		time.Sleep(retryBackoff(attempt))
 	}
 	if err != nil {
+		if errors.Is(err, fsx.ErrCanceled) {
+			return // the run is aborting; an interrupted copy is not a per-file failure
+		}
 		r.fail(err)
 		return
 	}

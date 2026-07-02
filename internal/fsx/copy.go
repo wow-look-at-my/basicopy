@@ -5,6 +5,7 @@
 package fsx
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,23 @@ type CopyOptions struct {
 	// may be called from the copying goroutine many times per file, so a shared
 	// implementation must be safe for concurrent use.
 	Progress func(n int64)
+
+	// Cancel, if non-nil, is polled between chunks as a copy proceeds. When it
+	// returns true the copy stops promptly and CopyFile returns ErrCanceled,
+	// with the temp file removed as usual — so an aborting run (Ctrl-C, the
+	// watchdog, --fatal-errors) stops mid-file instead of finishing a
+	// potentially enormous in-flight copy first. Like Progress, it may be
+	// called concurrently from every copying goroutine.
+	Cancel func() bool
 }
+
+// ErrCanceled is returned (wrapped) by CopyFile when CopyOptions.Cancel reports
+// the run is aborting. The interrupted temp file has been removed; no partial or
+// final destination file remains.
+var ErrCanceled = errors.New("copy canceled")
+
+// canceled reports whether the caller asked in-flight copies to stop.
+func (o *CopyOptions) canceled() bool { return o.Cancel != nil && o.Cancel() }
 
 // CopyFile copies the regular file at src to dst, crash-safely: the bytes are
 // written to a temporary file in dst's directory, metadata is applied, and the
@@ -37,6 +54,9 @@ type CopyOptions struct {
 // leaves a partial file at the final path. info is src's Lstat result and is used
 // for metadata preservation. It returns the number of bytes copied.
 func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
+	if o.canceled() {
+		return 0, ErrCanceled
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return 0, err
@@ -61,7 +81,7 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 		}
 	}()
 
-	n, err := copyData(tmp, in, info, o.BufSize, o.Progress)
+	n, err := copyData(tmp, in, info, o)
 	if err != nil {
 		return n, fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
@@ -122,12 +142,14 @@ func getBuf(size int) *[]byte {
 func putBuf(b *[]byte) { bufPool.Put(b) }
 
 // plainCopy is the portable buffered fallback: a streamed copy from the current
-// offsets of src to dst in bufSize chunks. It is shared by the platform copyData
-// functions. It deliberately uses an explicit read/write loop rather than
-// io.CopyBuffer: io.CopyBuffer would delegate to *os.File's ReaderFrom and copy
-// through its own fixed 32 KiB buffer, ignoring bufSize entirely (32x the
-// intended syscall count) — and the loop is also where progress is reported.
-func plainCopy(dst, src *os.File, bufSize int, progress func(int64)) (int64, error) {
+// offsets of src to dst in o.BufSize chunks. It is shared by the platform
+// copyData functions. It deliberately uses an explicit read/write loop rather
+// than io.CopyBuffer: io.CopyBuffer would delegate to *os.File's ReaderFrom and
+// copy through its own fixed 32 KiB buffer, ignoring the buffer size entirely
+// (32x the intended syscall count) — and the loop is also where progress and
+// cancellation are handled.
+func plainCopy(dst, src *os.File, o CopyOptions) (int64, error) {
+	bufSize := o.BufSize
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize
 	}
@@ -137,13 +159,16 @@ func plainCopy(dst, src *os.File, bufSize int, progress func(int64)) (int64, err
 
 	var written int64
 	for {
+		if o.canceled() {
+			return written, ErrCanceled
+		}
 		nr, rerr := src.Read(buf)
 		if nr > 0 {
 			nw, werr := dst.Write(buf[:nr])
 			if nw > 0 {
 				written += int64(nw)
-				if progress != nil {
-					progress(int64(nw))
+				if o.Progress != nil {
+					o.Progress(int64(nw))
 				}
 			}
 			if werr != nil {

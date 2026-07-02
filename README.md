@@ -39,7 +39,9 @@ basicopy SRC     --target-file FILE     # copy a single SRC file to exactly FILE
   the run), transient-error retries with backoff, crash-safe writes (temp file +
   atomic rename — a kill never leaves a corrupt file at the final path), and a
   no-progress watchdog (aborts a stalled non-interactive run after 30 s; prompts
-  on a TTY).
+  on a TTY). Aborts (Ctrl-C, the watchdog, a full destination) take effect
+  mid-file: in-flight copies stop at the next chunk instead of finishing a
+  multi-gigabyte file first, and leave no partial destination files behind.
 
 ## Install / build
 
