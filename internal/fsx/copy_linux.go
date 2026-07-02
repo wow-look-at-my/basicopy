@@ -19,9 +19,9 @@ import (
 //  3. copy_file_range — in-kernel copy (and NFS server-side copy), no userspace
 //     bounce buffer.
 //  4. Buffered read/write — the universal fallback.
-func copyData(dst, src *os.File, info os.FileInfo, bufSize int, progress func(int64)) (int64, error) {
+func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error) {
 	if info == nil {
-		return plainCopy(dst, src, bufSize, progress)
+		return plainCopy(dst, src, o)
 	}
 	size := info.Size()
 
@@ -29,24 +29,24 @@ func copyData(dst, src *os.File, info os.FileInfo, bufSize int, progress func(in
 		if err := unix.IoctlFileClone(int(dst.Fd()), int(src.Fd())); err == nil {
 			// A reflink shares extents instantly; credit the whole logical size so
 			// live progress reflects that the file has been copied.
-			if progress != nil {
-				progress(size)
+			if o.Progress != nil {
+				o.Progress(size)
 			}
 			return size, nil
 		}
 	}
 
 	if isSparse(info) {
-		if n, ok, err := copySparse(dst, src, size, bufSize, progress); ok {
+		if n, ok, err := copySparse(dst, src, size, o); ok {
 			return n, err
 		}
 	}
 
-	if n, ok, err := copyFileRange(dst, src, size, progress); ok {
+	if n, ok, err := copyFileRange(dst, src, size, o); ok {
 		return n, err
 	}
 
-	return plainCopy(dst, src, bufSize, progress)
+	return plainCopy(dst, src, o)
 }
 
 // isSparse reports whether info's allocated blocks are fewer than its logical
@@ -59,21 +59,27 @@ func isSparse(info os.FileInfo) bool {
 	return int64(st.Blocks)*512 < info.Size()
 }
 
+// copyChunk caps each copy_file_range call so the int64->int conversion can't
+// overflow on 32-bit platforms (or for multi-GB files); the loop handles the
+// remainder. The cap also bounds how long a single syscall runs before progress
+// and cancellation are checked, so a large file in flight never looks like a
+// stall to the watchdog and an abort takes effect promptly — even on slow media
+// (128 MiB is ~4 s at a glacial 30 MB/s, well under the stall timeout). A var so
+// tests can shrink it.
+var copyChunk = int64(128 << 20) // 128 MiB
+
 // copyFileRange copies up to size bytes via copy_file_range. ok=false means the
 // call is unsupported for this pair (cross-fs, old kernel, special file) and the
 // caller should fall back; it only reports unsupported before any bytes move.
-func copyFileRange(dst, src *os.File, size int64, progress func(int64)) (copied int64, ok bool, err error) {
-	// Cap each call so the int64->int conversion can't overflow on 32-bit
-	// platforms (or for multi-GB files); the loop handles the remainder. The cap
-	// also bounds how long a single syscall runs before progress is reported, so
-	// a large file in flight never looks like a stall to the watchdog — even on
-	// slow media (128 MiB is ~4 s at a glacial 30 MB/s, well under the timeout).
-	const maxChunk = 128 << 20 // 128 MiB
+func copyFileRange(dst, src *os.File, size int64, o CopyOptions) (copied int64, ok bool, err error) {
 	remaining := size
 	for remaining > 0 {
+		if o.canceled() {
+			return copied, true, ErrCanceled
+		}
 		chunk := remaining
-		if chunk > maxChunk {
-			chunk = maxChunk
+		if chunk > copyChunk {
+			chunk = copyChunk
 		}
 		n, e := unix.CopyFileRange(int(src.Fd()), nil, int(dst.Fd()), nil, int(chunk), 0)
 		if e != nil {
@@ -90,8 +96,8 @@ func copyFileRange(dst, src *os.File, size int64, progress func(int64)) (copied 
 		}
 		copied += int64(n)
 		remaining -= int64(n)
-		if progress != nil {
-			progress(int64(n))
+		if o.Progress != nil {
+			o.Progress(int64(n))
 		}
 	}
 	return copied, true, nil
@@ -101,11 +107,14 @@ func copyFileRange(dst, src *os.File, size int64, progress func(int64)) (copied 
 // to find data regions and skipping the gaps. ok=false (returned before any
 // write) means the filesystem doesn't support hole-seeking and the caller should
 // fall back. On success it returns the logical size.
-func copySparse(dst, src *os.File, size int64, bufSize int, progress func(int64)) (copied int64, ok bool, err error) {
+func copySparse(dst, src *os.File, size int64, o CopyOptions) (copied int64, ok bool, err error) {
+	bufSize := o.BufSize
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize
 	}
-	buf := make([]byte, bufSize)
+	bp := getBuf(bufSize)
+	defer putBuf(bp)
+	buf := *bp
 	srcFd := int(src.Fd())
 
 	var offset int64
@@ -129,6 +138,9 @@ func copySparse(dst, src *os.File, size int64, bufSize int, progress func(int64)
 		}
 		remaining := holeStart - dataStart
 		for remaining > 0 {
+			if o.canceled() {
+				return copied, true, ErrCanceled
+			}
 			r := int64(bufSize)
 			if r > remaining {
 				r = remaining
@@ -140,8 +152,8 @@ func copySparse(dst, src *os.File, size int64, bufSize int, progress func(int64)
 				}
 				copied += int64(nr)
 				remaining -= int64(nr)
-				if progress != nil {
-					progress(int64(nr))
+				if o.Progress != nil {
+					o.Progress(int64(nr))
 				}
 			}
 			if rerr == io.EOF {

@@ -8,6 +8,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,7 +47,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		stderr:      os.Stderr,
 		startedAt:   time.Now(),
 		onStack:     map[string]bool{},
-		hardlinkMap: map[string]string{},
+		hardlinkMap: map[string]hlPrimary{},
 		gate:        newGate(maxW, initW),
 		jobs:        make(chan fileJob, 1024),
 		metaJobs:    make(chan *dirState, 1024),
@@ -61,6 +62,11 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	// until it finishes. Summary bytes stay sourced from completed copies (so a
 	// retried file isn't double-counted); moved is monotonic and for liveness only.
 	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
+	// Stop in-flight copies at their next chunk boundary once the run is
+	// aborting (Ctrl-C, watchdog, --fatal-errors, out of space) — without this a
+	// cancelled run would still finish every in-flight file, which for large
+	// files can take minutes.
+	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
 
 	// Cancel the run if the context is cancelled (Ctrl-C); crash-safe temp files
 	// are cleaned up by fsx.CopyFile's deferred removal.
@@ -119,6 +125,12 @@ type fileJob struct {
 	src, dst string
 	info     os.FileInfo
 	parent   *dirState
+
+	// checkUnchanged defers the skip-unchanged decision to the worker: the
+	// walk goroutine enqueues without stat/hashing the destination so that,
+	// with --checksum, content hashing runs across the pool instead of
+	// serializing on the walk.
+	checkUnchanged bool
 }
 
 type runner struct {
@@ -164,15 +176,10 @@ type runner struct {
 
 	// Walk-goroutine-owned state (no locking needed).
 	onStack     map[string]bool
-	hardlinkMap map[string]string // inode key -> first destination ("primary")
-	hardlinks   []linkEnt         // secondary links to create after all copies
-	rootDev     uint64            // device of the current source root (one-file-system)
+	hardlinkMap map[string]hlPrimary // inode key -> primary destination
+	hardlinks   []linkEnt            // secondary links to create after all copies
+	rootDev     uint64               // device of the current source root (one-file-system)
 	rootDevSet  bool
-}
-
-type linkEnt struct {
-	target, dst string
-	parent      *dirState
 }
 
 // workerCount returns the gate ceiling and its initial limit. With --max-threads
@@ -233,6 +240,15 @@ func retryBackoff(attempt int) time.Duration {
 // copyOne performs a single file copy and records stats, retrying transient
 // errors a few times with short backoff. Safe for concurrent use.
 func (r *runner) copyOne(job fileJob) {
+	if job.checkUnchanged && scan.Unchanged(job.src, job.info, job.dst, r.opts.Checksum) {
+		// Undo the discovery accounting: these bytes will never move, so the
+		// live progress denominator and ETA must not keep counting them.
+		r.totalFiles.Add(-1)
+		r.totalBytes.Add(-job.info.Size())
+		r.skipped.Add(1)
+		r.verbose("skip unchanged %s", job.dst)
+		return
+	}
 	if !r.reserveSpace(job.dst, job.info.Size()) {
 		return // destination is full; the run has been aborted
 	}
@@ -248,6 +264,9 @@ func (r *runner) copyOne(job fileJob) {
 		time.Sleep(retryBackoff(attempt))
 	}
 	if err != nil {
+		if errors.Is(err, fsx.ErrCanceled) {
+			return // the run is aborting; an interrupted copy is not a per-file failure
+		}
 		r.fail(err)
 		return
 	}
@@ -357,44 +376,6 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 	}
 }
 
-// handleRegular preserves hardlinks (default-on): the first path to a multiply-
-// linked inode is copied; subsequent paths are recorded to be link()ed to that
-// first copy after all copies finish. Single-link files are just copied.
-func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
-	if scan.Unchanged(srcPath, fi, dstPath, r.opts.Checksum) {
-		r.skipped.Add(1)
-		r.verbose("skip unchanged %s", dstPath)
-		return
-	}
-	if !r.opts.NoHardlinks && !r.opts.DryRun {
-		if key, nlink, ok := fileKey(fi); ok && nlink > 1 {
-			if primary, seen := r.hardlinkMap[key]; seen {
-				r.addDirWork(parent)
-				r.hardlinks = append(r.hardlinks, linkEnt{target: primary, dst: dstPath, parent: parent})
-				return
-			}
-			r.hardlinkMap[key] = dstPath
-		}
-	}
-	r.enqueueFile(srcPath, dstPath, fi, parent)
-}
-
-// applyHardlinks creates the recorded secondary hardlinks after all primary
-// copies have completed.
-func (r *runner) applyHardlinks() {
-	for _, l := range r.hardlinks {
-		_ = os.Remove(l.dst) // tolerate a leftover from a prior run
-		if err := os.Link(l.target, l.dst); err != nil {
-			r.fail(fmt.Errorf("hardlink %s -> %s: %w", l.dst, l.target, err))
-			r.completeDirWork(l.parent)
-			continue
-		}
-		r.linked.Add(1)
-		r.verbose("%s => %s (hardlink)", l.dst, l.target)
-		r.completeDirWork(l.parent)
-	}
-}
-
 func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string, fi os.FileInfo) {
 	if !r.opts.DryRun {
 		if err := os.MkdirAll(dstDir, 0o777); err != nil {
@@ -423,7 +404,7 @@ func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string
 	}
 }
 
-func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
+func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *dirState, checkUnchanged bool) {
 	r.totalFiles.Add(1)
 	r.totalBytes.Add(fi.Size())
 	if r.opts.DryRun {
@@ -433,7 +414,7 @@ func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *di
 		return
 	}
 	r.addDirWork(parent)
-	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi, parent: parent}
+	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi, parent: parent, checkUnchanged: checkUnchanged}
 }
 
 func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo, parent *dirState) {
@@ -486,7 +467,11 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, tfi)
 		delete(r.onStack, canon)
 	case tfi.Mode().IsRegular():
-		r.enqueueFile(srcPath, dstPath, tfi, parent)
+		// Route through handleRegular (not enqueueFile directly) so a
+		// dereferenced symlink target gets the same skip-unchanged check and
+		// hardlink identity handling as any other regular file — otherwise an
+		// incremental re-run recopies every in-tree symlink target forever.
+		r.handleRegular(srcPath, dstPath, tfi, parent)
 	default:
 		r.note("skipping special symlink target %s", srcPath)
 		r.skipped.Add(1)
@@ -641,6 +626,7 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 	if err != nil {
 		return // destDir isn't a directory (e.g. a file source) or doesn't exist
 	}
+	removed := false
 	for _, e := range entries {
 		destPath := filepath.Join(destDir, e.Name())
 		srcPath := filepath.Join(srcDir, e.Name())
@@ -655,12 +641,23 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 				r.fail(fmt.Errorf("delete %s: %w", destPath, err))
 				continue
 			}
+			removed = true
 			r.deleted.Add(1)
 			r.verbose("deleted %s", destPath)
 			continue
 		}
 		if e.IsDir() {
 			r.mirrorDir(destPath, srcPath)
+		}
+	}
+	if removed && r.copyOpts.Preserve {
+		// Deleting entries bumped destDir's mtime after the copy phase already
+		// applied directory metadata; restore it from the source so --mirror
+		// doesn't clobber preserved directory times.
+		if fi, err := os.Lstat(srcDir); err == nil {
+			if err := fsx.ApplyMeta(srcDir, destDir, fi, true); err != nil {
+				r.warn("metadata on %s: %v", destDir, err)
+			}
 		}
 	}
 }

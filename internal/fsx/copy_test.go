@@ -3,6 +3,7 @@ package fsx
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,7 +89,7 @@ func TestPlainCopyDirect(t *testing.T) {
 	out, err := os.Create(filepath.Join(dir, "b"))
 	require.NoError(t, err)
 
-	n, err := plainCopy(out, in, 4, nil) // tiny buffer forces the copy loop
+	n, err := plainCopy(out, in, CopyOptions{BufSize: 4}) // tiny buffer forces the copy loop
 	require.NoError(t, err)
 	assert.EqualValues(t, len(want), n)
 	require.NoError(t, out.Close())
@@ -119,7 +120,7 @@ func TestPlainCopyProgress(t *testing.T) {
 
 	var total int64
 	var calls int
-	n, err := plainCopy(out, in, 64<<10, func(d int64) { total += d; calls++ })
+	n, err := plainCopy(out, in, CopyOptions{BufSize: 64 << 10, Progress: func(d int64) { total += d; calls++ }})
 	require.NoError(t, err)
 	assert.EqualValues(t, len(want), n)
 	assert.EqualValues(t, len(want), total, "progress must sum to bytes copied")
@@ -174,4 +175,82 @@ func TestCopyFileFsync(t *testing.T) {
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("durable"), got)
+}
+
+// TestPlainCopyCancelStopsEarly cancels after the first chunk's progress: the
+// buffered loop must stop at the next chunk boundary with ErrCanceled rather
+// than draining the rest of the file.
+func TestPlainCopyCancelStopsEarly(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a")
+	const size = 256 << 10
+	require.NoError(t, os.WriteFile(src, make([]byte, size), 0o644))
+
+	in, err := os.Open(src)
+	require.NoError(t, err)
+	defer in.Close()
+	out, err := os.Create(filepath.Join(dir, "b"))
+	require.NoError(t, err)
+	defer out.Close()
+
+	canceled := false
+	n, err := plainCopy(out, in, CopyOptions{
+		BufSize:  64 << 10,
+		Progress: func(int64) { canceled = true },
+		Cancel:   func() bool { return canceled },
+	})
+	require.ErrorIs(t, err, ErrCanceled)
+	assert.EqualValues(t, 64<<10, n, "must stop after the chunk that flipped cancel")
+}
+
+// TestCopyFileCanceledLeavesNothing checks the whole-file contract under
+// cancellation: ErrCanceled is reported (wrapped), no destination file is
+// published, and no temp file is left behind.
+func TestCopyFileCanceledLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	require.NoError(t, os.WriteFile(src, []byte("data"), 0o644))
+	info, err := os.Lstat(src)
+	require.NoError(t, err)
+
+	dst := filepath.Join(dir, "dst")
+	_, err = CopyFile(src, dst, info, CopyOptions{Cancel: func() bool { return true }})
+	require.ErrorIs(t, err, ErrCanceled)
+
+	_, statErr := os.Lstat(dst)
+	assert.True(t, os.IsNotExist(statErr), "no destination file may be published")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasPrefix(e.Name(), ".basicopy-tmp-"), "temp file leaked: %s", e.Name())
+	}
+}
+
+// BenchmarkPlainCopyProgress measures the buffered fallback path exactly as the
+// engine drives it (a live progress callback is always installed): chunk size
+// and per-file allocation behavior both show up here.
+func BenchmarkPlainCopyProgress(b *testing.B) {
+	dir := b.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	size := int64(8 << 20)
+	require.NoError(b, os.WriteFile(src, make([]byte, size), 0o644))
+
+	in, err := os.Open(src)
+	require.NoError(b, err)
+	defer in.Close()
+	out, err := os.Create(filepath.Join(dir, "dst.bin"))
+	require.NoError(b, err)
+	defer out.Close()
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, err := in.Seek(0, io.SeekStart)
+		require.NoError(b, err)
+		_, err = out.Seek(0, io.SeekStart)
+		require.NoError(b, err)
+		n, err := plainCopy(out, in, CopyOptions{Progress: func(int64) {}})
+		require.NoError(b, err)
+		require.EqualValues(b, size, n)
+	}
 }
