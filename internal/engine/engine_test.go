@@ -344,6 +344,35 @@ func TestMirrorDeletesExtraneous(t *testing.T) {
 	assert.NoError(t, e4, "matching nested file must be kept")
 }
 
+// TestMirrorRestoresDirTimes: the mirror pass runs after the copy phase has
+// already applied directory metadata, and deleting an extraneous entry bumps
+// its parent's mtime — the pass must restore the preserved directory time.
+func TestMirrorRestoresDirTimes(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "d", "keep.txt"), []byte("k"), 0o644)
+	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	require.NoError(t, os.Chtimes(filepath.Join(src, "d"), old, old))
+
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Mirror: true, Progress: "auto"}
+	require.NoError(t, o.Validate())
+	_, err := Run(context.Background(), o)
+	require.NoError(t, err)
+
+	// Plant an extraneous file and mirror again: deleting it bumps d's mtime
+	// after d's metadata was applied.
+	writeFile(t, filepath.Join(dst, "src", "d", "extra.txt"), []byte("x"), 0o644)
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, sum.Deleted)
+
+	di, err := os.Lstat(filepath.Join(dst, "src", "d"))
+	require.NoError(t, err)
+	assert.WithinDuration(t, old, di.ModTime(), time.Second,
+		"mirror deletions must not clobber preserved directory times")
+}
+
 func TestAutoscaleControllerRuns(t *testing.T) {
 	old := controlInterval
 	controlInterval = time.Millisecond

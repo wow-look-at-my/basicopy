@@ -626,6 +626,7 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 	if err != nil {
 		return // destDir isn't a directory (e.g. a file source) or doesn't exist
 	}
+	removed := false
 	for _, e := range entries {
 		destPath := filepath.Join(destDir, e.Name())
 		srcPath := filepath.Join(srcDir, e.Name())
@@ -640,12 +641,23 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 				r.fail(fmt.Errorf("delete %s: %w", destPath, err))
 				continue
 			}
+			removed = true
 			r.deleted.Add(1)
 			r.verbose("deleted %s", destPath)
 			continue
 		}
 		if e.IsDir() {
 			r.mirrorDir(destPath, srcPath)
+		}
+	}
+	if removed && r.copyOpts.Preserve {
+		// Deleting entries bumped destDir's mtime after the copy phase already
+		// applied directory metadata; restore it from the source so --mirror
+		// doesn't clobber preserved directory times.
+		if fi, err := os.Lstat(srcDir); err == nil {
+			if err := fsx.ApplyMeta(srcDir, destDir, fi, true); err != nil {
+				r.warn("metadata on %s: %v", destDir, err)
+			}
 		}
 	}
 }
