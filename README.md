@@ -103,8 +103,7 @@ is announced on stderr.
 ## Platform support
 
 - **Linux:** full depth — device classification + `%util` guard, reflink, sparse,
-  `copy_file_range`, `posix_fadvise`/`sync_file_range`, hardlink, ownership,
-  xattr, and POSIX ACL preservation.
+  `copy_file_range`, hardlink, ownership, xattr, and POSIX ACL preservation.
 - **macOS / other Unix:** portable buffered copy with metadata/ownership/hardlink
   preservation; xattrs are preserved on macOS. The controller runs on throughput
   + latency + system-CPU signals (no `%util`).
@@ -118,7 +117,8 @@ is announced on stderr.
 - Native fast-copy primitives on macOS (`clonefile`) and Windows (`CopyFileEx`,
   ReFS block clone) and their device classification.
 - `O_DIRECT` (page-cache-bypassing) reads/writes — needs aligned-buffer handling
-  before it's worth a flag.
+  before it's worth a flag — and `posix_fadvise`/`sync_file_range` page-cache
+  hints for the buffered path.
 - Native ACL preservation outside Linux.
 - Live JSON progress events (only the final `--json` summary is emitted today).
 
