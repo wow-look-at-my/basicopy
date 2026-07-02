@@ -232,6 +232,28 @@ func TestSkipUnchangedOnRerun(t *testing.T) {
 	assert.EqualValues(t, 2, sum2.Skipped, "re-run should skip both unchanged files")
 }
 
+// TestSkipUnchangedSymlinkTargetOnRerun guards the incremental path for
+// dereferenced in-tree symlinks: the copy made for the symlink must get the same
+// skip-unchanged treatment as a plain file, or every re-run recopies it.
+func TestSkipUnchangedSymlinkTargetOnRerun(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "f.txt"), []byte("payload"), 0o644)
+	require.NoError(t, os.Symlink("f.txt", filepath.Join(src, "s.txt")))
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum1, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, sum1.Files, "first run copies the file and the dereferenced link")
+
+	sum2, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, sum2.Files, "re-run should copy nothing")
+	assert.EqualValues(t, 2, sum2.Skipped, "both the file and the dereferenced link are unchanged")
+}
+
 func TestExcludeFilter(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

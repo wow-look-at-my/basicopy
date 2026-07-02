@@ -20,7 +20,6 @@ import (
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/options"
-	"github.com/wow-look-at-my/basicopy/internal/scan"
 )
 
 // Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
@@ -46,7 +45,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		stderr:      os.Stderr,
 		startedAt:   time.Now(),
 		onStack:     map[string]bool{},
-		hardlinkMap: map[string]string{},
+		hardlinkMap: map[string]hlPrimary{},
 		gate:        newGate(maxW, initW),
 		jobs:        make(chan fileJob, 1024),
 		metaJobs:    make(chan *dirState, 1024),
@@ -164,15 +163,10 @@ type runner struct {
 
 	// Walk-goroutine-owned state (no locking needed).
 	onStack     map[string]bool
-	hardlinkMap map[string]string // inode key -> first destination ("primary")
-	hardlinks   []linkEnt         // secondary links to create after all copies
-	rootDev     uint64            // device of the current source root (one-file-system)
+	hardlinkMap map[string]hlPrimary // inode key -> primary destination
+	hardlinks   []linkEnt            // secondary links to create after all copies
+	rootDev     uint64               // device of the current source root (one-file-system)
 	rootDevSet  bool
-}
-
-type linkEnt struct {
-	target, dst string
-	parent      *dirState
 }
 
 // workerCount returns the gate ceiling and its initial limit. With --max-threads
@@ -357,44 +351,6 @@ func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string,
 	}
 }
 
-// handleRegular preserves hardlinks (default-on): the first path to a multiply-
-// linked inode is copied; subsequent paths are recorded to be link()ed to that
-// first copy after all copies finish. Single-link files are just copied.
-func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
-	if scan.Unchanged(srcPath, fi, dstPath, r.opts.Checksum) {
-		r.skipped.Add(1)
-		r.verbose("skip unchanged %s", dstPath)
-		return
-	}
-	if !r.opts.NoHardlinks && !r.opts.DryRun {
-		if key, nlink, ok := fileKey(fi); ok && nlink > 1 {
-			if primary, seen := r.hardlinkMap[key]; seen {
-				r.addDirWork(parent)
-				r.hardlinks = append(r.hardlinks, linkEnt{target: primary, dst: dstPath, parent: parent})
-				return
-			}
-			r.hardlinkMap[key] = dstPath
-		}
-	}
-	r.enqueueFile(srcPath, dstPath, fi, parent)
-}
-
-// applyHardlinks creates the recorded secondary hardlinks after all primary
-// copies have completed.
-func (r *runner) applyHardlinks() {
-	for _, l := range r.hardlinks {
-		_ = os.Remove(l.dst) // tolerate a leftover from a prior run
-		if err := os.Link(l.target, l.dst); err != nil {
-			r.fail(fmt.Errorf("hardlink %s -> %s: %w", l.dst, l.target, err))
-			r.completeDirWork(l.parent)
-			continue
-		}
-		r.linked.Add(1)
-		r.verbose("%s => %s (hardlink)", l.dst, l.target)
-		r.completeDirWork(l.parent)
-	}
-}
-
 func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string, fi os.FileInfo) {
 	if !r.opts.DryRun {
 		if err := os.MkdirAll(dstDir, 0o777); err != nil {
@@ -486,7 +442,11 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, tfi)
 		delete(r.onStack, canon)
 	case tfi.Mode().IsRegular():
-		r.enqueueFile(srcPath, dstPath, tfi, parent)
+		// Route through handleRegular (not enqueueFile directly) so a
+		// dereferenced symlink target gets the same skip-unchanged check and
+		// hardlink identity handling as any other regular file — otherwise an
+		// incremental re-run recopies every in-tree symlink target forever.
+		r.handleRegular(srcPath, dstPath, tfi, parent)
 	default:
 		r.note("skipping special symlink target %s", srcPath)
 		r.skipped.Add(1)
