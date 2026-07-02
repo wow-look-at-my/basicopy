@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 
 	"lukechampine.com/blake3"
@@ -45,6 +46,14 @@ func Unchanged(srcPath string, srcInfo fs.FileInfo, dstPath string, checksum boo
 	return hs == hd
 }
 
+// hashBufSize is the read chunk for content hashing. Reading in large chunks
+// matters twice over: it divides the read() syscall count, and BLAKE3 hashes
+// large writes in-place where io.Copy's small internal buffer made the hasher
+// allocate per chunk (more garbage than the file itself).
+const hashBufSize = 1 << 20
+
+var bufPool = sync.Pool{New: func() any { b := make([]byte, hashBufSize); return &b }}
+
 func hashFile(path string) ([32]byte, error) {
 	var sum [32]byte
 	f, err := os.Open(path)
@@ -53,8 +62,19 @@ func hashFile(path string) ([32]byte, error) {
 	}
 	defer f.Close()
 	h := blake3.New(32, nil)
-	if _, err := io.Copy(h, f); err != nil {
-		return sum, err
+	bp := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bp)
+	for {
+		n, rerr := f.Read(*bp)
+		if n > 0 {
+			h.Write((*bp)[:n]) // a hash.Hash never returns a write error
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return sum, rerr
+		}
 	}
 	copy(sum[:], h.Sum(nil))
 	return sum, nil

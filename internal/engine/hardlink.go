@@ -30,12 +30,22 @@ func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *
 			return
 		}
 	}
-	if scan.Unchanged(srcPath, fi, dstPath, r.opts.Checksum) {
-		r.skipped.Add(1)
-		r.verbose("skip unchanged %s", dstPath)
+	if r.opts.DryRun {
+		// A dry run has no worker pool; decide skip-vs-copy right here.
+		if scan.Unchanged(srcPath, fi, dstPath, r.opts.Checksum) {
+			r.skipped.Add(1)
+			r.verbose("skip unchanged %s", dstPath)
+			return
+		}
+		r.enqueueFile(srcPath, dstPath, fi, parent, false)
 		return
 	}
-	r.enqueueFile(srcPath, dstPath, fi, parent)
+	// The skip-unchanged decision runs on the worker pool (checkUnchanged), not
+	// here: with --checksum it means two full content reads, and doing that on
+	// the single walk goroutine would serialize all hashing while the pool sat
+	// idle. Multi-link files (above) still decide on the walk goroutine because
+	// the answer feeds the walk-owned hardlink bookkeeping.
+	r.enqueueFile(srcPath, dstPath, fi, parent, true)
 }
 
 // handleMultiLink handles one path to a multiply-linked source inode. The first
@@ -67,7 +77,7 @@ func (r *runner) handleMultiLink(srcPath, dstPath string, fi os.FileInfo, parent
 		return
 	}
 	r.hardlinkMap[key] = hlPrimary{dst: dstPath}
-	r.enqueueFile(srcPath, dstPath, fi, parent)
+	r.enqueueFile(srcPath, dstPath, fi, parent, false)
 }
 
 // sameFile reports whether two paths currently refer to the same inode.

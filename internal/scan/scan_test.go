@@ -57,3 +57,20 @@ func TestUnchangedChecksum(t *testing.T) {
 	write(t, dst, []byte("identicaX"), mt)
 	assert.False(t, Unchanged(src, si, dst, true))
 }
+
+// BenchmarkHashFile measures the per-file cost of the --checksum content hash:
+// read chunk size and allocation behavior both show up here.
+func BenchmarkHashFile(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "f.bin")
+	size := int64(8 << 20)
+	require.NoError(b, os.WriteFile(path, make([]byte, size), 0o644))
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, err := hashFile(path)
+		require.Nil(b, err)
+
+	}
+}

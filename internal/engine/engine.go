@@ -21,6 +21,7 @@ import (
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/options"
+	"github.com/wow-look-at-my/basicopy/internal/scan"
 )
 
 // Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
@@ -124,6 +125,12 @@ type fileJob struct {
 	src, dst string
 	info     os.FileInfo
 	parent   *dirState
+
+	// checkUnchanged defers the skip-unchanged decision to the worker: the
+	// walk goroutine enqueues without stat/hashing the destination so that,
+	// with --checksum, content hashing runs across the pool instead of
+	// serializing on the walk.
+	checkUnchanged bool
 }
 
 type runner struct {
@@ -233,6 +240,15 @@ func retryBackoff(attempt int) time.Duration {
 // copyOne performs a single file copy and records stats, retrying transient
 // errors a few times with short backoff. Safe for concurrent use.
 func (r *runner) copyOne(job fileJob) {
+	if job.checkUnchanged && scan.Unchanged(job.src, job.info, job.dst, r.opts.Checksum) {
+		// Undo the discovery accounting: these bytes will never move, so the
+		// live progress denominator and ETA must not keep counting them.
+		r.totalFiles.Add(-1)
+		r.totalBytes.Add(-job.info.Size())
+		r.skipped.Add(1)
+		r.verbose("skip unchanged %s", job.dst)
+		return
+	}
 	if !r.reserveSpace(job.dst, job.info.Size()) {
 		return // destination is full; the run has been aborted
 	}
@@ -388,7 +404,7 @@ func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string
 	}
 }
 
-func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
+func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *dirState, checkUnchanged bool) {
 	r.totalFiles.Add(1)
 	r.totalBytes.Add(fi.Size())
 	if r.opts.DryRun {
@@ -398,7 +414,7 @@ func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *di
 		return
 	}
 	r.addDirWork(parent)
-	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi, parent: parent}
+	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi, parent: parent, checkUnchanged: checkUnchanged}
 }
 
 func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo, parent *dirState) {
