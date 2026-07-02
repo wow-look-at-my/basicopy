@@ -3,6 +3,7 @@ package fsx
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,4 +175,33 @@ func TestCopyFileFsync(t *testing.T) {
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("durable"), got)
+}
+
+// BenchmarkPlainCopyProgress measures the buffered fallback path exactly as the
+// engine drives it (a live progress callback is always installed): chunk size
+// and per-file allocation behavior both show up here.
+func BenchmarkPlainCopyProgress(b *testing.B) {
+	dir := b.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	size := int64(8 << 20)
+	require.NoError(b, os.WriteFile(src, make([]byte, size), 0o644))
+
+	in, err := os.Open(src)
+	require.NoError(b, err)
+	defer in.Close()
+	out, err := os.Create(filepath.Join(dir, "dst.bin"))
+	require.NoError(b, err)
+	defer out.Close()
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, err := in.Seek(0, io.SeekStart)
+		require.NoError(b, err)
+		_, err = out.Seek(0, io.SeekStart)
+		require.NoError(b, err)
+		n, err := plainCopy(out, in, 0, func(int64) {})
+		require.NoError(b, err)
+		require.EqualValues(b, size, n)
+	}
 }

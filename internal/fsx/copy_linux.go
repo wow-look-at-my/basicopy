@@ -105,7 +105,9 @@ func copySparse(dst, src *os.File, size int64, bufSize int, progress func(int64)
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize
 	}
-	buf := make([]byte, bufSize)
+	bp := getBuf(bufSize)
+	defer putBuf(bp)
+	buf := *bp
 	srcFd := int(src.Fd())
 
 	var offset int64

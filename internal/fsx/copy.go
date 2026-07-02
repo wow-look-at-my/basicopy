@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // DefaultBufSize is the portable fallback buffer used when no device-adaptive
@@ -100,35 +101,63 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 	return n, nil
 }
 
-// plainCopy is the portable buffered fallback: a straight streamed copy from the
-// current offsets of src to dst. It is shared by the platform copyData functions.
-// When progress is non-nil it is called with each chunk's byte count as the copy
-// proceeds; the source is wrapped so progress is reported regardless of whether
-// io.CopyBuffer takes its buffered path or an os.File ReadFrom fast path.
+// bufPool recycles copy buffers across files so a run over many files does not
+// allocate (and page-fault in) a fresh multi-megabyte buffer per file. Buffers of
+// mixed capacity may coexist; a pooled buffer too small for a request is dropped
+// and replaced, so the pool converges to the largest size in use.
+var bufPool sync.Pool
+
+func getBuf(size int) *[]byte {
+	if v := bufPool.Get(); v != nil {
+		b := v.(*[]byte)
+		if cap(*b) >= size {
+			*b = (*b)[:size]
+			return b
+		}
+	}
+	b := make([]byte, size)
+	return &b
+}
+
+func putBuf(b *[]byte) { bufPool.Put(b) }
+
+// plainCopy is the portable buffered fallback: a streamed copy from the current
+// offsets of src to dst in bufSize chunks. It is shared by the platform copyData
+// functions. It deliberately uses an explicit read/write loop rather than
+// io.CopyBuffer: io.CopyBuffer would delegate to *os.File's ReaderFrom and copy
+// through its own fixed 32 KiB buffer, ignoring bufSize entirely (32x the
+// intended syscall count) — and the loop is also where progress is reported.
 func plainCopy(dst, src *os.File, bufSize int, progress func(int64)) (int64, error) {
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize
 	}
-	buf := make([]byte, bufSize)
-	var r io.Reader = src
-	if progress != nil {
-		r = progressReader{r: src, progress: progress}
-	}
-	return io.CopyBuffer(dst, r, buf)
-}
+	bp := getBuf(bufSize)
+	defer putBuf(bp)
+	buf := *bp
 
-// progressReader reports the size of each read through it via progress. It is used
-// to surface live copy progress for buffered copies; because it does not implement
-// io.WriterTo, every byte still flows through Read where it can be counted.
-type progressReader struct {
-	r        io.Reader
-	progress func(int64)
-}
-
-func (p progressReader) Read(b []byte) (int, error) {
-	n, err := p.r.Read(b)
-	if n > 0 {
-		p.progress(int64(n))
+	var written int64
+	for {
+		nr, rerr := src.Read(buf)
+		if nr > 0 {
+			nw, werr := dst.Write(buf[:nr])
+			if nw > 0 {
+				written += int64(nw)
+				if progress != nil {
+					progress(int64(nw))
+				}
+			}
+			if werr != nil {
+				return written, werr
+			}
+			if nw < nr {
+				return written, io.ErrShortWrite
+			}
+		}
+		if rerr == io.EOF {
+			return written, nil
+		}
+		if rerr != nil {
+			return written, rerr
+		}
 	}
-	return n, err
 }
