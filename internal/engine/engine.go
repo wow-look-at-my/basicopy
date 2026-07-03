@@ -31,11 +31,19 @@ type Summary struct {
 	Dirs     int64 `json:"dirs"`
 	Symlinks int64 `json:"symlinks"`
 	Linked   int64 `json:"hardlinks"` // hardlinks preserved
+	Updated  int64 `json:"updated"`   // attribute-only touch-ups on otherwise unchanged entries
 	Deleted  int64 `json:"deleted"`   // extraneous destination entries removed (--mirror)
 	Bytes    int64 `json:"bytes"`
 	Skipped  int64 `json:"skipped"`
 	Failed   int64 `json:"failed"`
 }
+
+// Output destinations for per-item lines and diagnostics (vars so tests can
+// capture a full run's output).
+var (
+	runStdout io.Writer = os.Stdout
+	runStderr io.Writer = os.Stderr
+)
 
 // Run executes the copy described by opts, returning a Summary even on partial
 // failure.
@@ -43,8 +51,8 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	maxW, initW := workerCount(opts)
 	r := &runner{
 		opts:        opts,
-		stdout:      os.Stdout,
-		stderr:      os.Stderr,
+		stdout:      runStdout,
+		stderr:      runStderr,
 		startedAt:   time.Now(),
 		onStack:     map[string]bool{},
 		hardlinkMap: map[string]hlPrimary{},
@@ -103,8 +111,8 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	}
 	close(stopWatch)
 
+	r.applyHardlinks()
 	if !opts.DryRun {
-		r.applyHardlinks()
 		close(r.metaJobs)
 		r.metaWg.Wait()
 	}
@@ -131,6 +139,11 @@ type fileJob struct {
 	// with --checksum, content hashing runs across the pool instead of
 	// serializing on the walk.
 	checkUnchanged bool
+
+	// reason is the itemizable cause of the copy when the walk already
+	// compared the destination (checkUnchanged false); the worker fills it in
+	// otherwise.
+	reason string
 }
 
 type runner struct {
@@ -151,8 +164,8 @@ type runner struct {
 	stderr    io.Writer
 	startedAt time.Time
 
-	files, dirs, symlinks, bytes, skipped, failed, linked, deleted atomic.Int64
-	dirMetaTotal, dirMetaDone                                      atomic.Int64
+	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
+	dirMetaTotal, dirMetaDone                                               atomic.Int64
 
 	// moved is a monotonic count of bytes written across all in-flight and
 	// completed copies (updated mid-copy via copyOpts.Progress). It is the
@@ -178,9 +191,16 @@ type runner struct {
 	onStack     map[string]bool
 	hardlinkMap map[string]hlPrimary // inode key -> primary destination
 	hardlinks   []linkEnt            // secondary links to create after all copies
+	mirrorRoots []mirrorRoot         // dest/src pairs the --mirror pass may prune
 	rootDev     uint64               // device of the current source root (one-file-system)
 	rootDevSet  bool
 }
+
+// mirrorRoot pairs a walked source root with its destination. The --mirror pass
+// deletes only under roots recorded here, so a source that failed its safety
+// guards (or didn't exist) can never have its destination -- or, in contents
+// mode, itself -- swept as "extraneous".
+type mirrorRoot struct{ dest, src string }
 
 // workerCount returns the gate ceiling and its initial limit. With --max-threads
 // the count is pinned; otherwise it scales with CPU count (the M4 controller will
@@ -240,14 +260,18 @@ func retryBackoff(attempt int) time.Duration {
 // copyOne performs a single file copy and records stats, retrying transient
 // errors a few times with short backoff. Safe for concurrent use.
 func (r *runner) copyOne(job fileJob) {
-	if job.checkUnchanged && scan.Unchanged(job.src, job.info, job.dst, r.opts.Checksum) {
-		// Undo the discovery accounting: these bytes will never move, so the
-		// live progress denominator and ETA must not keep counting them.
-		r.totalFiles.Add(-1)
-		r.totalBytes.Add(-job.info.Size())
-		r.skipped.Add(1)
-		r.verbose("skip unchanged %s", job.dst)
-		return
+	reason := job.reason
+	if job.checkUnchanged {
+		v := scan.Compare(job.src, job.info, job.dst, r.opts.Checksum)
+		if !v.NeedCopy {
+			// Undo the discovery accounting: these bytes will never move, so
+			// the live progress denominator and ETA must not keep counting them.
+			r.totalFiles.Add(-1)
+			r.totalBytes.Add(-job.info.Size())
+			r.finishUnchangedFile(job.dst, job.info, v)
+			return
+		}
+		reason = v.Reason
 	}
 	if !r.reserveSpace(job.dst, job.info.Size()) {
 		return // destination is full; the run has been aborted
@@ -272,267 +296,47 @@ func (r *runner) copyOne(job fileJob) {
 	}
 	r.files.Add(1)
 	r.bytes.Add(n)
-	r.verbose("%s", job.dst)
+	r.item("copy %s (%s)", job.dst, reason)
 }
 
-func (r *runner) walk(ctx context.Context) error {
-	if r.opts.TargetFile != "" {
-		return r.walkTargetFile(ctx)
-	}
-	return r.walkTargetDir(ctx)
-}
-
-func (r *runner) walkTargetFile(ctx context.Context) error {
-	src := r.opts.Sources[0]
-	fi, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-	if fi.IsDir() {
-		return fmt.Errorf("--target-file given but source %q is a directory", src)
-	}
-	if err := r.ensureRoot(filepath.Dir(r.opts.TargetFile)); err != nil {
-		return err
-	}
-	r.initSpaceGuard(filepath.Dir(r.opts.TargetFile))
-	r.setRootDev(fi)
-	rootAbs, _ := filepath.Abs(filepath.Dir(src))
-	r.visit(ctx, src, r.opts.TargetFile, rootAbs, fi, nil)
-	return nil
-}
-
-func (r *runner) walkTargetDir(ctx context.Context) error {
-	for _, src := range r.opts.Sources {
-		if r.abortErr() != nil {
-			break
-		}
-		clean := filepath.Clean(src)
-		base := filepath.Base(clean)
-		if base == "." || base == ".." || base == string(filepath.Separator) {
-			r.fail(fmt.Errorf("cannot derive a destination name for source %q", src))
-			continue
-		}
-		fi, err := os.Lstat(src)
-		if err != nil {
-			r.fail(err)
-			continue
-		}
-		dstPath := filepath.Join(r.opts.TargetDir, base)
-		if fi.IsDir() {
-			srcAbs, srcErr := filepath.Abs(clean)
-			dstAbs, dstErr := filepath.Abs(dstPath)
-			if srcErr == nil && dstErr == nil && withinRoot(srcAbs, dstAbs) {
-				r.fail(fmt.Errorf("destination %q is inside source %q", dstPath, src))
-				continue
+// finishUnchangedFile finalizes a destination file whose content is already up
+// to date: when metadata preservation is on and the verdict reports attribute
+// drift, the attributes are synced (or, in a dry run, itemized) and the entry
+// counts as updated; otherwise it is a plain skip. Attribute application is
+// best-effort, matching the directory-metadata policy (a warning, not a
+// failure).
+func (r *runner) finishUnchangedFile(dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
+	if r.copyOpts.Preserve {
+		if diff := attrDiff(srcInfo, v); diff != "" {
+			if !r.opts.DryRun {
+				if err := fsx.SyncAttrs(dstPath, srcInfo, v.ModeDiff, v.OwnerDiff, v.TimeDiff); err != nil {
+					r.warn("metadata on %s: %v", dstPath, err)
+				}
 			}
-		}
-		if err := r.ensureRoot(r.opts.TargetDir); err != nil {
-			return err
-		}
-		r.initSpaceGuard(r.opts.TargetDir)
-		r.setRootDev(fi)
-		rootAbs, _ := filepath.Abs(clean)
-		r.visit(ctx, src, dstPath, rootAbs, fi, nil)
-	}
-	return nil
-}
-
-// visit dispatches a single entry. Directories and symlinks are handled on the
-// walk goroutine; regular files are queued for the worker pool.
-func (r *runner) visit(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo, parent *dirState) {
-	if r.abortErr() != nil {
-		return
-	}
-	select {
-	case <-ctx.Done():
-		r.setAbort(ctx.Err())
-		return
-	default:
-	}
-
-	if r.excluded(srcPath, srcRootAbs) {
-		r.verbose("exclude %s", srcPath)
-		return
-	}
-
-	mode := fi.Mode()
-	switch {
-	case mode&os.ModeSymlink != 0:
-		r.visitSymlink(ctx, srcPath, dstPath, srcRootAbs, fi, parent)
-	case mode.IsDir():
-		if r.opts.OneFileSystem && r.rootDevSet {
-			if dev, ok := fileDev(fi); ok && dev != r.rootDev {
-				r.note("skipping mount point %s", srcPath)
-				r.skipped.Add(1)
-				return
-			}
-		}
-		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, fi)
-	case mode.IsRegular():
-		r.handleRegular(srcPath, dstPath, fi, parent)
-	default:
-		r.note("skipping special file %s", srcPath)
-		r.skipped.Add(1)
-	}
-}
-
-func (r *runner) visitDir(ctx context.Context, srcDir, dstDir, srcRootAbs string, fi os.FileInfo) {
-	if !r.opts.DryRun {
-		if err := os.MkdirAll(dstDir, 0o777); err != nil {
-			r.fail(fmt.Errorf("mkdir %s: %w", dstDir, err))
+			r.updated.Add(1)
+			r.item("%supdate %s (%s)", r.would(), dstPath, diff)
 			return
 		}
 	}
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		r.fail(fmt.Errorf("read dir %s: %w", srcDir, err))
-		return
-	}
-	state := r.newDirState(srcDir, dstDir, fi)
-	defer r.closeDir(state)
-	r.dirs.Add(1)
-	for _, e := range entries {
-		if r.abortErr() != nil {
-			return
-		}
-		cfi, err := e.Info()
-		if err != nil {
-			r.fail(err)
-			continue
-		}
-		r.visit(ctx, filepath.Join(srcDir, e.Name()), filepath.Join(dstDir, e.Name()), srcRootAbs, cfi, state)
-	}
+	r.skipped.Add(1)
+	r.verbose("skip unchanged %s", dstPath)
 }
 
-func (r *runner) enqueueFile(srcPath, dstPath string, fi os.FileInfo, parent *dirState, checkUnchanged bool) {
-	r.totalFiles.Add(1)
-	r.totalBytes.Add(fi.Size())
-	if r.opts.DryRun {
-		r.files.Add(1)
-		r.bytes.Add(fi.Size())
-		r.verbose("would copy %s", dstPath)
-		return
+// attrDiff renders a verdict's attribute drift as the itemize suffix, e.g.
+// "mode 0600 -> 0644, owner 1000:1000 -> 0:0, mtime". Parts appear in that
+// fixed order and only when they differ; the result is empty when nothing does.
+func attrDiff(srcInfo os.FileInfo, v scan.Verdict) string {
+	var parts []string
+	if v.ModeDiff {
+		parts = append(parts, fmt.Sprintf("mode %04o -> %04o", v.DstInfo.Mode().Perm(), srcInfo.Mode().Perm()))
 	}
-	r.addDirWork(parent)
-	r.jobs <- fileJob{src: srcPath, dst: dstPath, info: fi, parent: parent, checkUnchanged: checkUnchanged}
-}
-
-func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs string, fi os.FileInfo, parent *dirState) {
-	target, err := os.Readlink(srcPath)
-	if err != nil {
-		r.fail(err)
-		return
+	if v.OwnerDiff {
+		parts = append(parts, fmt.Sprintf("owner %d:%d -> %d:%d", v.DstUID, v.DstGID, v.SrcUID, v.SrcGID))
 	}
-	if r.opts.NoFollowSymlinks {
-		r.recreateSymlink(srcPath, target, dstPath, fi)
-		return
+	if v.TimeDiff {
+		parts = append(parts, "mtime")
 	}
-
-	targetAbs := target
-	if !filepath.IsAbs(target) {
-		targetAbs = filepath.Join(filepath.Dir(srcPath), target)
-	}
-	targetAbs = filepath.Clean(targetAbs)
-	if abs, err := filepath.Abs(targetAbs); err == nil {
-		targetAbs = abs
-	}
-
-	tfi, statErr := os.Stat(srcPath) // follows the link
-	if statErr != nil {
-		r.warn("dangling symlink %s -> %s (kept as link)", srcPath, target)
-		r.recreateSymlink(srcPath, target, dstPath, fi)
-		return
-	}
-	if !withinRoot(srcRootAbs, targetAbs) {
-		if !r.opts.NoSymlinkWarnings {
-			r.warn("symlink %s -> %s points outside the source tree (kept as link)", srcPath, target)
-		}
-		r.recreateSymlink(srcPath, target, dstPath, fi)
-		return
-	}
-
-	switch {
-	case tfi.IsDir():
-		canon, err := filepath.EvalSymlinks(srcPath)
-		if err != nil {
-			r.fail(err)
-			return
-		}
-		if r.onStack[canon] {
-			r.warn("symlink loop at %s (skipped)", srcPath)
-			r.skipped.Add(1)
-			return
-		}
-		r.onStack[canon] = true
-		r.visitDir(ctx, srcPath, dstPath, srcRootAbs, tfi)
-		delete(r.onStack, canon)
-	case tfi.Mode().IsRegular():
-		// Route through handleRegular (not enqueueFile directly) so a
-		// dereferenced symlink target gets the same skip-unchanged check and
-		// hardlink identity handling as any other regular file — otherwise an
-		// incremental re-run recopies every in-tree symlink target forever.
-		r.handleRegular(srcPath, dstPath, tfi, parent)
-	default:
-		r.note("skipping special symlink target %s", srcPath)
-		r.skipped.Add(1)
-	}
-}
-
-func (r *runner) recreateSymlink(srcPath, target, dstPath string, fi os.FileInfo) {
-	if r.opts.DryRun {
-		r.symlinks.Add(1)
-		r.verbose("would link %s -> %s", dstPath, target)
-		return
-	}
-	_ = os.Remove(dstPath) // tolerate a leftover from a prior run
-	if err := os.Symlink(target, dstPath); err != nil {
-		r.fail(fmt.Errorf("symlink %s: %w", dstPath, err))
-		return
-	}
-	if err := fsx.ApplyMeta(srcPath, dstPath, fi, r.copyOpts.Preserve); err != nil {
-		r.warn("metadata on %s: %v", dstPath, err)
-	}
-	r.symlinks.Add(1)
-	r.verbose("%s -> %s", dstPath, target)
-}
-
-// ensureRoot makes the destination root exist, creating missing ancestors and
-// announcing each created directory on stderr (unless --no-auto-mkdirs).
-func (r *runner) ensureRoot(dir string) error {
-	dir = filepath.Clean(dir)
-	if fi, err := os.Stat(dir); err == nil {
-		if !fi.IsDir() {
-			return fmt.Errorf("target %s exists but is not a directory", dir)
-		}
-		return nil
-	}
-	if r.opts.NoAutoMkdirs {
-		return fmt.Errorf("target directory %s does not exist (remove --no-auto-mkdirs to create it)", dir)
-	}
-
-	var missing []string
-	for p := dir; ; {
-		if _, err := os.Stat(p); err == nil {
-			break
-		}
-		missing = append(missing, p)
-		parent := filepath.Dir(p)
-		if parent == p {
-			break
-		}
-		p = parent
-	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		if r.opts.DryRun {
-			r.elog("basicopy: would create directory %s", missing[i])
-			continue
-		}
-		if err := os.Mkdir(missing[i], 0o777); err != nil && !os.IsExist(err) {
-			return fmt.Errorf("create %s: %w", missing[i], err)
-		}
-		r.elog("basicopy: created directory %s", missing[i])
-	}
-	return nil
+	return strings.Join(parts, ", ")
 }
 
 func (r *runner) setAbort(err error) {
@@ -575,6 +379,7 @@ func (r *runner) summary() *Summary {
 		Dirs:     r.dirs.Load(),
 		Symlinks: r.symlinks.Load(),
 		Linked:   r.linked.Load(),
+		Updated:  r.updated.Load(),
 		Deleted:  r.deleted.Load(),
 		Bytes:    r.bytes.Load(),
 		Skipped:  r.skipped.Load(),
@@ -602,6 +407,8 @@ func (r *runner) note(format string, a ...any) {
 	r.elog("basicopy: "+format, a...)
 }
 
+// verbose prints a low-interest per-entry line ("skip unchanged", "exclude")
+// that only appears under --verbose, in dry and real runs alike.
 func (r *runner) verbose(format string, a ...any) {
 	if !r.opts.Verbose {
 		return
@@ -611,13 +418,35 @@ func (r *runner) verbose(format string, a ...any) {
 	r.outMu.Unlock()
 }
 
+// item prints one per-entry action line (copy, update, mkdir, link, hardlink,
+// delete). In a dry run these lines ARE the product, so they print by default
+// and only --quiet suppresses them; in a real run they print under --verbose
+// only.
+func (r *runner) item(format string, a ...any) {
+	if r.opts.Quiet || (!r.opts.DryRun && !r.opts.Verbose) {
+		return
+	}
+	r.outMu.Lock()
+	fmt.Fprintf(r.stdout, format+"\n", a...)
+	r.outMu.Unlock()
+}
+
+// would returns the "would " itemize prefix in a dry run, empty otherwise, for
+// action lines that share their format between dry and real runs.
+func (r *runner) would() string {
+	if r.opts.DryRun {
+		return "would "
+	}
+	return ""
+}
+
 // mirrorExtraneous deletes destination entries that have no counterpart in the
 // source (the --mirror / robocopy /MIR behavior). It runs after copying so the
-// destination already reflects the source's content.
+// destination already reflects the source's content, and only under the roots
+// the walk actually processed.
 func (r *runner) mirrorExtraneous() {
-	for _, src := range r.opts.Sources {
-		base := filepath.Base(filepath.Clean(src))
-		r.mirrorDir(filepath.Join(r.opts.TargetDir, base), src)
+	for _, m := range r.mirrorRoots {
+		r.mirrorDir(m.dest, m.src)
 	}
 }
 
@@ -634,7 +463,7 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 			// No source counterpart -> extraneous; remove it.
 			if r.opts.DryRun {
 				r.deleted.Add(1)
-				r.verbose("would delete %s", destPath)
+				r.item("would delete %s", destPath)
 				continue
 			}
 			if err := os.RemoveAll(destPath); err != nil {
@@ -643,7 +472,7 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 			}
 			removed = true
 			r.deleted.Add(1)
-			r.verbose("deleted %s", destPath)
+			r.item("deleted %s", destPath)
 			continue
 		}
 		if e.IsDir() {
@@ -660,56 +489,4 @@ func (r *runner) mirrorDir(destDir, srcDir string) {
 			}
 		}
 	}
-}
-
-func (r *runner) setRootDev(fi os.FileInfo) {
-	if dev, ok := fileDev(fi); ok {
-		r.rootDev, r.rootDevSet = dev, true
-	} else {
-		r.rootDevSet = false
-	}
-}
-
-// excluded applies the --exclude/--include globs. A path is excluded if it
-// matches any --exclude pattern and no --include pattern; patterns are matched
-// against both the path relative to the source root and the basename.
-func (r *runner) excluded(srcPath, srcRootAbs string) bool {
-	if len(r.opts.Exclude) == 0 && len(r.opts.Include) == 0 {
-		return false
-	}
-	base := filepath.Base(srcPath)
-	rel := base
-	if abs, err := filepath.Abs(srcPath); err == nil {
-		if rp, err := filepath.Rel(srcRootAbs, abs); err == nil {
-			rel = rp
-		}
-	}
-	for _, inc := range r.opts.Include {
-		if matchGlob(inc, rel) || matchGlob(inc, base) {
-			return false
-		}
-	}
-	for _, exc := range r.opts.Exclude {
-		if matchGlob(exc, rel) || matchGlob(exc, base) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchGlob(pattern, name string) bool {
-	ok, err := filepath.Match(pattern, name)
-	return err == nil && ok
-}
-
-// withinRoot reports whether targetAbs lies at or beneath rootAbs.
-func withinRoot(rootAbs, targetAbs string) bool {
-	rel, err := filepath.Rel(rootAbs, targetAbs)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

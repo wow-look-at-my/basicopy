@@ -46,6 +46,28 @@ func ApplyMeta(src, dst string, info os.FileInfo, preserve bool) error {
 	return nil
 }
 
+// SyncAttrs applies selected metadata attributes from info to dst: the
+// permission bits, the ownership, and/or the modification time. It is used for
+// attribute-only touch-ups on entries whose content is already up to date.
+// Ownership is best-effort (EPERM is tolerated) and operations the destination
+// filesystem cannot support are skipped, matching ApplyMeta's policy.
+func SyncAttrs(dst string, info os.FileInfo, mode, owner, times bool) error {
+	if mode {
+		if err := os.Chmod(dst, info.Mode().Perm()); err != nil && !metaUnsupported(err) {
+			return fmt.Errorf("chmod %s: %w", dst, err)
+		}
+	}
+	if owner {
+		if err := preserveOwner(dst, info); err != nil {
+			return err
+		}
+	}
+	if times {
+		return preserveTimes(dst, info)
+	}
+	return nil
+}
+
 // preserveTimes sets dst's modification time to match info. Sub-second precision
 // and access-time preservation are refined in the platform-specific files; this
 // portable version sets mtime (and atime = mtime as a safe default). A filesystem

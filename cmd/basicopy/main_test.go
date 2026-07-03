@@ -53,6 +53,7 @@ func TestRunTextSummary(t *testing.T) {
 	cmd := newCmd(&out)
 	require.NoError(t, run(cmd, o))
 	assert.Contains(t, out.String(), "1 files")
+	assert.Contains(t, out.String(), "0 updated")
 }
 
 func TestRunMirrorSummary(t *testing.T) {

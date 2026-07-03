@@ -22,6 +22,12 @@ type Options struct {
 	TargetDir  string
 	TargetFile string
 
+	// Contents copies each source directory's contents into TargetDir itself
+	// instead of nesting under the source's basename (rsync's SRC/
+	// trailing-slash semantics, as an explicit flag). File sources still land
+	// under their basename. Requires TargetDir.
+	Contents bool
+
 	// NoAutoMkdirs turns a missing target parent directory into an error
 	// instead of creating it (and announcing each created dir on stderr).
 	NoAutoMkdirs bool
@@ -73,6 +79,13 @@ func (o *Options) Validate() error {
 
 	if o.Mirror && o.TargetDir == "" {
 		return fmt.Errorf("--mirror only makes sense with --target-dir")
+	}
+
+	if o.Contents && o.TargetDir == "" {
+		return fmt.Errorf("--contents requires --target-dir")
+	}
+	if o.Contents && o.Mirror && len(o.Sources) != 1 {
+		return fmt.Errorf("--mirror with --contents takes exactly one source (mirroring a multi-source union is ambiguous), got %d", len(o.Sources))
 	}
 
 	if o.Verbose && o.Quiet {
