@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -146,6 +147,54 @@ func TestHardlinkRejoinsSeparatedCopies(t *testing.T) {
 	assert.EqualValues(t, 0, sum.Files, "content is up to date; nothing recopied")
 	assert.EqualValues(t, 1, sum.Linked, "the duplicate must be relinked to the primary")
 	assertHardlinked(t, filepath.Join(dst, "src", "h0.txt"), filepath.Join(dst, "src", "h1.txt"))
+}
+
+// TestDryRunHardlinkItemized: dry runs use the same hardlink bookkeeping as
+// real ones, so a linked pair itemizes as one copy plus one hardlink instead
+// of two independent copies (matching what the real run will do).
+func TestDryRunHardlinkItemized(t *testing.T) {
+	o, dst := hardlinkPair(t)
+	od := *o
+	od.DryRun = true
+	sum, out, _ := captureRun(t, &od)
+	assert.EqualValues(t, 1, sum.Files, "one primary copy")
+	assert.EqualValues(t, 1, sum.Linked, "one secondary hardlink")
+	assert.Contains(t, out, fmt.Sprintf("would copy %s (new)\n", filepath.Join(dst, "src", "h0.txt")))
+	assert.Contains(t, out, fmt.Sprintf("would hardlink %s => %s\n",
+		filepath.Join(dst, "src", "h1.txt"), filepath.Join(dst, "src", "h0.txt")))
+	_, statErr := os.Stat(dst)
+	assert.True(t, os.IsNotExist(statErr), "a dry run must not create anything")
+}
+
+// TestOwnerDriftUpdate (root only): an unchanged file whose destination owner
+// drifted is itemized with the uid:gid pair and chowned back on a real run.
+func TestOwnerDriftUpdate(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("owner touch-up needs root")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "f.txt"), []byte("payload"), 0o644)
+	dst := filepath.Join(root, "dst")
+
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	captureRun(t, o)
+	require.NoError(t, os.Lchown(filepath.Join(dst, "src", "f.txt"), 12345, 54321))
+
+	od := &options.Options{Sources: []string{src}, TargetDir: dst, DryRun: true, Progress: "auto"}
+	sum, out, _ := captureRun(t, od)
+	assert.Contains(t, out, fmt.Sprintf("would update %s (owner 12345:54321 -> 0:0)\n", filepath.Join(dst, "src", "f.txt")))
+	assert.EqualValues(t, 1, sum.Updated)
+
+	or := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	sumr, _, _ := captureRun(t, or)
+	assert.EqualValues(t, 1, sumr.Updated)
+	fi, err := os.Lstat(filepath.Join(dst, "src", "f.txt"))
+	require.NoError(t, err)
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	require.True(t, ok)
+	assert.EqualValues(t, 0, st.Uid, "the real run must chown the owner back")
+	assert.EqualValues(t, 0, st.Gid)
 }
 
 func TestNoHardlinksDuplicates(t *testing.T) {

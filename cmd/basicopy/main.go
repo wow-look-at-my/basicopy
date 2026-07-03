@@ -52,6 +52,7 @@ func init() {
 	// Destination.
 	f.StringVar(&opts.TargetDir, "target-dir", "", "copy each SRC under this directory as DIR/<basename>")
 	f.StringVar(&opts.TargetFile, "target-file", "", "copy a single SRC file to exactly this path")
+	f.BoolVar(&opts.Contents, "contents", false, "copy each source directory's contents into --target-dir itself instead of nesting under the source's basename (rsync SRC/ trailing-slash equivalent)")
 	f.BoolVar(&opts.NoAutoMkdirs, "no-auto-mkdirs", false, "error on missing target parents instead of creating them")
 
 	// Scaling / performance (the tool self-tunes; these are escape hatches).

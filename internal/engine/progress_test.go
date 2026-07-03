@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,6 +74,7 @@ func TestDiscoveryTotalsCountQueuedCopyWork(t *testing.T) {
 	r := &runner{
 		opts:        &options.Options{DryRun: true, Progress: "auto"},
 		hardlinkMap: map[string]hlPrimary{},
+		stdout:      io.Discard, // dry runs itemize by default
 	}
 	copyInfo, err := os.Stat(copyMe)
 	require.NoError(t, err)
