@@ -260,7 +260,7 @@ func (r *runner) visitSymlink(ctx context.Context, srcPath, dstPath, srcRootAbs 
 	case tfi.Mode().IsRegular():
 		// Route through handleRegular (not enqueueFile directly) so a
 		// dereferenced symlink target gets the same skip-unchanged check and
-		// hardlink identity handling as any other regular file — otherwise an
+		// hardlink identity handling as any other regular file -- otherwise an
 		// incremental re-run recopies every in-tree symlink target forever.
 		r.handleRegular(srcPath, dstPath, tfi, parent)
 	default:
