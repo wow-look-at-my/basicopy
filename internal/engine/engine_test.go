@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -232,6 +233,51 @@ func TestSkipUnchangedOnRerun(t *testing.T) {
 	assert.EqualValues(t, 2, sum2.Skipped, "re-run should skip both unchanged files")
 }
 
+// TestCanceledCopyIsNotAFailure: once the run is aborting, an in-flight copy
+// interrupted via the Cancel hook must stop without being recorded as a
+// per-file failure (the abort itself is the run's error) and without
+// publishing a destination file.
+func TestCanceledCopyIsNotAFailure(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src.bin")
+	writeFile(t, src, []byte("data"), 0o644)
+	info, err := os.Lstat(src)
+	require.NoError(t, err)
+
+	r := &runner{opts: &options.Options{}, stdout: io.Discard, stderr: io.Discard}
+	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
+	r.setAbort(context.Canceled)
+
+	dst := filepath.Join(root, "dst.bin")
+	r.copyOne(fileJob{src: src, dst: dst, info: info})
+	assert.Zero(t, r.failed.Load(), "a canceled copy is not a per-file failure")
+	assert.Zero(t, r.files.Load(), "a canceled copy must not count as completed")
+	_, statErr := os.Lstat(dst)
+	assert.True(t, os.IsNotExist(statErr), "no destination file may be published")
+}
+
+// TestSkipUnchangedSymlinkTargetOnRerun guards the incremental path for
+// dereferenced in-tree symlinks: the copy made for the symlink must get the same
+// skip-unchanged treatment as a plain file, or every re-run recopies it.
+func TestSkipUnchangedSymlinkTargetOnRerun(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "f.txt"), []byte("payload"), 0o644)
+	require.NoError(t, os.Symlink("f.txt", filepath.Join(src, "s.txt")))
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
+	require.NoError(t, o.Validate())
+
+	sum1, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, sum1.Files, "first run copies the file and the dereferenced link")
+
+	sum2, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, sum2.Files, "re-run should copy nothing")
+	assert.EqualValues(t, 2, sum2.Skipped, "both the file and the dereferenced link are unchanged")
+}
+
 func TestExcludeFilter(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
@@ -296,6 +342,35 @@ func TestMirrorDeletesExtraneous(t *testing.T) {
 	assert.NoError(t, e3, "matching file must be kept")
 	_, e4 := os.Stat(filepath.Join(dst, "src", "sub", "in.txt"))
 	assert.NoError(t, e4, "matching nested file must be kept")
+}
+
+// TestMirrorRestoresDirTimes: the mirror pass runs after the copy phase has
+// already applied directory metadata, and deleting an extraneous entry bumps
+// its parent's mtime — the pass must restore the preserved directory time.
+func TestMirrorRestoresDirTimes(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "d", "keep.txt"), []byte("k"), 0o644)
+	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	require.NoError(t, os.Chtimes(filepath.Join(src, "d"), old, old))
+
+	dst := filepath.Join(root, "dst")
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Mirror: true, Progress: "auto"}
+	require.NoError(t, o.Validate())
+	_, err := Run(context.Background(), o)
+	require.NoError(t, err)
+
+	// Plant an extraneous file and mirror again: deleting it bumps d's mtime
+	// after d's metadata was applied.
+	writeFile(t, filepath.Join(dst, "src", "d", "extra.txt"), []byte("x"), 0o644)
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, sum.Deleted)
+
+	di, err := os.Lstat(filepath.Join(dst, "src", "d"))
+	require.NoError(t, err)
+	assert.WithinDuration(t, old, di.ModTime(), time.Second,
+		"mirror deletions must not clobber preserved directory times")
 }
 
 func TestAutoscaleControllerRuns(t *testing.T) {

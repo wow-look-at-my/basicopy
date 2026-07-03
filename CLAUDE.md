@@ -51,9 +51,10 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
   job, so scaling doesn't churn goroutines.
 - **Walk vs workers.** Directory creation, symlink handling, hardlink detection,
   and exclude/one-file-system decisions happen on the single walk goroutine (no
-  locking); file copies run on the pool. Directory metadata and hardlinks are
-  applied after all copies so file writes don't clobber dir mtimes and link
-  targets exist.
+  locking); file copies — and the per-file skip-unchanged check, so --checksum
+  hashing parallelizes instead of serializing on the walk — run on the pool.
+  Directory metadata and hardlinks are applied after all copies so file writes
+  don't clobber dir mtimes and link targets exist.
 - **Crash safety:** every file is written to a temp file in the destination
   directory and atomically renamed; an interrupted run never leaves a corrupt
   file at the final path.

@@ -72,7 +72,7 @@ func TestDiscoveryTotalsCountQueuedCopyWork(t *testing.T) {
 
 	r := &runner{
 		opts:        &options.Options{DryRun: true, Progress: "auto"},
-		hardlinkMap: map[string]string{},
+		hardlinkMap: map[string]hlPrimary{},
 	}
 	copyInfo, err := os.Stat(copyMe)
 	require.NoError(t, err)
