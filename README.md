@@ -63,6 +63,8 @@ go-toolchain            # tidy, test, build -> ./build/basicopy
 | Metadata preserve (mode/times/owner/xattr/Linux ACL) | on | `--no-preserve` |
 | Sparse / hole-skip | on | — |
 | Skip unchanged (size+mtime) | on | `--checksum` for content (BLAKE3) |
+| Attr touch-up on unchanged entries (mode/owner; +mtime with `--checksum`) | on | `--no-preserve` |
+| Dry-run itemizes every pending change (with reason) | on | `--quiet` |
 | Hardlinks preserved | on | `--no-hardlinks` |
 | Follow symlinks (deref in-tree, keep out-of-tree as links) | on | `--no-follow-symlinks` |
 | Warn on out-of-tree symlinks | on (stderr) | `--no-symlink-warnings` |
@@ -88,15 +90,47 @@ basicopy data --target-dir /mnt/archive --checksum
 # Machine-readable summary.
 basicopy data --target-dir /mnt/archive --json
 
-# Cap parallelism on a shared box; exclude build junk.
-basicopy repo --target-dir /srv/repo --max-threads 8 --exclude '*.o' --exclude '*.tmp'
+# Cap parallelism on a shared box; exclude build junk. A pattern ending in '/'
+# matches directories only ('node_modules/' never hits a file of that name).
+basicopy repo --target-dir /srv/repo --max-threads 8 --exclude '*.o' --exclude 'node_modules/'
+
+# Preview exactly what a sync would do, verified by content hash (rsync
+# --dry-run --itemize-changes --checksum -rlptgoD --exclude 'node_modules/' SRC/ DEST/):
+basicopy SRC --contents --target-dir DEST --dry-run --checksum --no-follow-symlinks --exclude 'node_modules/'
 ```
+
+### Dry runs itemize by default
+
+`--dry-run` prints one line per pending change on stdout, each with its reason --
+no extra flag needed (rsync's bare `--dry-run` printing nothing is the trap this
+avoids). `--quiet` silences it; a real run prints the same lines (minus the
+"would ") under `--verbose`:
+
+```
+would copy DEST/a.txt (new)                  # or: (size 6 -> 27), (mtime differs),
+would copy DEST/b.txt (content differs)      #     (type change); content differs
+would update DEST/c.txt (mode 0600 -> 0644)  #     needs --checksum
+would update DEST/d.txt (owner 1000:1000 -> 0:0, mtime)
+would mkdir DEST/sub
+would link DEST/l.lnk -> target.txt
+would hardlink DEST/h1.bin => DEST/h0.bin
+would delete DEST/stale.txt                  # --mirror only
+```
+
+An unchanged file whose mode/owner drifted (or, with `--checksum`, whose mtime
+drifted while the content is verifiably identical) is repaired in place instead
+of staying wrong forever, and counted as "updated" in the summary. Unchanged
+entries stay silent unless `--verbose` (`skip unchanged ...`).
 
 ### Path semantics (no games)
 
 The destination is always explicit — there is no positional `DST` and no
 trailing-slash magic. With `--target-dir DIR`, each `SRC` lands under `DIR` by its
-basename (`DIR/<basename(src)>`). With `--target-file FILE`, a single source file
+basename (`DIR/<basename(src)>`). Add `--contents` to copy each source
+*directory's* contents into `DIR` itself instead -- rsync's `SRC/` trailing-slash
+behavior as an explicit flag, so a path never changes meaning because of a slash
+(file sources still land under their basename, and `--mirror --contents` takes
+exactly one source). With `--target-file FILE`, a single source file
 is copied to exactly `FILE`. Missing parent directories are created and each one
 is announced on stderr.
 
@@ -121,8 +155,9 @@ is announced on stderr.
   hints for the buffered path.
 - Native ACL preservation outside Linux.
 - Live JSON progress events (only the final `--json` summary is emitted today).
+- Device and special files (mknod): skipped with a stderr note.
 
 See `internal/` for the implementation: `engine` (orchestration + workers),
 `control` (the auto-scaling controller), `device`/`sysload` (signal sources),
-`fsx` (copy primitives), `scan` (skip-unchanged), `walk`-style traversal lives in
-`engine`.
+`fsx` (copy primitives), `scan` (reason-coded skip-unchanged compare),
+`walk`-style traversal lives in `engine`.

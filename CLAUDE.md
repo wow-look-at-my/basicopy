@@ -22,7 +22,8 @@ org testify fork: `github.com/wow-look-at-my/testify/{assert,require}`.
 cmd/basicopy/        cobra CLI (one command per file, self-registering via init())
 internal/
   options/   parsed flags + Validate() + human size parsing (no cobra dependency)
-  engine/    orchestration: pipelined walk (dirs/symlinks/hardlinks on the walk
+  engine/    orchestration (engine.go) + walking/dispatch/itemized output
+             (walk.go): pipelined walk (dirs/symlinks/hardlinks on the walk
              goroutine) feeding a worker pool through a resizable gate; plus the
              autoscale loop, watchdog, retry, progress, and mirror passes
   control/   the auto-scaling controller — pure decision logic (no I/O), tested
@@ -32,7 +33,10 @@ internal/
   sysload/   system-wide CPU sampler (Linux /proc/stat; stub elsewhere)
   fsx/       copy primitives: crash-safe temp+rename, metadata, and per-OS fast
              paths (Linux reflink/sparse/copy_file_range; buffered elsewhere)
-  scan/      skip-unchanged decision (size+mtime, or BLAKE3 with --checksum)
+  scan/      reason-coded skip-unchanged compare: Compare returns why a copy is
+             needed (new/type change/size/mtime/content) or which attributes
+             drifted (mode/owner/mtime) on an unchanged file; size+mtime by
+             default, BLAKE3 with --checksum
 ```
 
 Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
@@ -63,6 +67,10 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
 
 - Time-driven loops (`controlInterval`, `watchInterval`, `progressInterval`,
   retry delays) are package vars so tests can shorten them.
+- `Run`'s per-item/diagnostic output goes through the `runStdout`/`runStderr`
+  seam vars (engine.go) so full-run tests can capture it -- see `captureRun` in
+  `itemize_test.go`. Dry runs itemize on stdout by default, so hand-built
+  `runner` literals in tests need a non-nil `stdout` (e.g. `io.Discard`).
 - The env runs as root, so permission-denied paths can't be exercised; tests use
   other real failure modes (missing sources, dest collisions, ENOTDIR).
 - `fileKey`/`fileDev` (inode identity, device) are Unix-only; hardlink and
