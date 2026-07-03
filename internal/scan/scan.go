@@ -99,14 +99,6 @@ func CompareAttrs(srcInfo, dstInfo fs.FileInfo) Verdict {
 	return v
 }
 
-// Unchanged reports whether dstPath already matches the source described by
-// srcPath/srcInfo and can be skipped. Any error (e.g. dst missing) means "not
-// unchanged" -- copy it. It is a thin wrapper over Compare for callers that don't
-// need the reason.
-func Unchanged(srcPath string, srcInfo fs.FileInfo, dstPath string, checksum bool) bool {
-	return !Compare(srcPath, srcInfo, dstPath, checksum).NeedCopy
-}
-
 func absDur(d time.Duration) time.Duration {
 	if d < 0 {
 		return -d

@@ -387,10 +387,16 @@ func (r *runner) summary() *Summary {
 	}
 }
 
-func (r *runner) elog(format string, a ...any) {
+// printLine writes one line to w under the shared output lock, so stdout item
+// lines and stderr diagnostics never tear mid-line.
+func (r *runner) printLine(w io.Writer, format string, a ...any) {
 	r.outMu.Lock()
-	fmt.Fprintf(r.stderr, format+"\n", a...)
+	fmt.Fprintf(w, format+"\n", a...)
 	r.outMu.Unlock()
+}
+
+func (r *runner) elog(format string, a ...any) {
+	r.printLine(r.stderr, format, a...)
 }
 
 func (r *runner) warn(format string, a ...any) {
@@ -414,9 +420,7 @@ func (r *runner) verbose(format string, a ...any) {
 	if !r.opts.Verbose || r.opts.JSON {
 		return
 	}
-	r.outMu.Lock()
-	fmt.Fprintf(r.stdout, format+"\n", a...)
-	r.outMu.Unlock()
+	r.printLine(r.stdout, format, a...)
 }
 
 // item prints one per-entry action line (copy, update, mkdir, link, hardlink,
@@ -428,9 +432,7 @@ func (r *runner) item(format string, a ...any) {
 	if r.opts.Quiet || r.opts.JSON || (!r.opts.DryRun && !r.opts.Verbose) {
 		return
 	}
-	r.outMu.Lock()
-	fmt.Fprintf(r.stdout, format+"\n", a...)
-	r.outMu.Unlock()
+	r.printLine(r.stdout, format, a...)
 }
 
 // would returns the "would " itemize prefix in a dry run, empty otherwise, for
