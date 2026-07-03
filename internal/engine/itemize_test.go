@@ -326,3 +326,26 @@ func TestMirrorDryRunItemizesDeletes(t *testing.T) {
 	_, err := os.Lstat(filepath.Join(dst, "src", "extra.txt"))
 	assert.NoError(t, err, "dry run must not delete")
 }
+
+// TestJSONKeepsStdoutPure: --json owns stdout for the machine-readable summary,
+// so the engine must emit no per-item lines there -- neither dry-run
+// itemization nor --verbose lines may mix human text into the JSON stream.
+func TestJSONKeepsStdoutPure(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("hi"), 0o644)
+	dst := filepath.Join(root, "dst")
+
+	od := &options.Options{Sources: []string{src}, TargetDir: dst, DryRun: true, JSON: true, Progress: "auto"}
+	sum, out, _ := captureRun(t, od)
+	assert.Empty(t, out, "--json must suppress dry-run itemization on stdout")
+	assert.EqualValues(t, 1, sum.Files, "counting is unaffected by --json")
+
+	// A real --json --verbose run keeps stdout engine-silent too: first a copy
+	// (item lines), then a rerun (verbose skip-unchanged lines).
+	ov := &options.Options{Sources: []string{src}, TargetDir: dst, JSON: true, Verbose: true, Progress: "auto"}
+	_, vout, _ := captureRun(t, ov)
+	assert.Empty(t, vout, "--json wins over --verbose for stdout purity")
+	_, rout, _ := captureRun(t, ov)
+	assert.Empty(t, rout, "verbose skip lines are suppressed under --json as well")
+}

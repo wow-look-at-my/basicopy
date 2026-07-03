@@ -64,7 +64,7 @@ go-toolchain            # tidy, test, build -> ./build/basicopy
 | Sparse / hole-skip | on | — |
 | Skip unchanged (size+mtime) | on | `--checksum` for content (BLAKE3) |
 | Attr touch-up on unchanged entries (mode/owner; +mtime with `--checksum`) | on | `--no-preserve` |
-| Dry-run itemizes every pending change (with reason) | on | `--quiet` |
+| Dry-run itemizes every pending change (with reason) | on | `--quiet` / `--json` |
 | Hardlinks preserved | on | `--no-hardlinks` |
 | Follow symlinks (deref in-tree, keep out-of-tree as links) | on | `--no-follow-symlinks` |
 | Warn on out-of-tree symlinks | on (stderr) | `--no-symlink-warnings` |
@@ -103,8 +103,9 @@ basicopy SRC --contents --target-dir DEST --dry-run --checksum --no-follow-symli
 
 `--dry-run` prints one line per pending change on stdout, each with its reason --
 no extra flag needed (rsync's bare `--dry-run` printing nothing is the trap this
-avoids). `--quiet` silences it; a real run prints the same lines (minus the
-"would ") under `--verbose`:
+avoids). `--quiet` silences it, and so does `--json`, which keeps stdout pure
+machine-readable JSON (the summary object is the only thing printed there); a
+real run prints the same lines (minus the "would ") under `--verbose`:
 
 ```
 would copy DEST/a.txt (new)                  # or: (size 6 -> 27), (mtime differs),

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/engine"
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
 
@@ -76,6 +78,12 @@ func TestRunJSONSummary(t *testing.T) {
 	cmd := newCmd(&out)
 	require.NoError(t, run(cmd, o))
 	assert.Contains(t, out.String(), `"files": 1`)
+
+	// The whole stdout payload must be one JSON document -- nothing before or
+	// after it (machine consumers parse the stream as-is).
+	var sum engine.Summary
+	require.NoError(t, json.Unmarshal(out.Bytes(), &sum), "stdout must be pure JSON, got: %q", out.String())
+	assert.EqualValues(t, 1, sum.Files)
 }
 
 func TestRunReportsFailure(t *testing.T) {

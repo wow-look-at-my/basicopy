@@ -408,9 +408,10 @@ func (r *runner) note(format string, a ...any) {
 }
 
 // verbose prints a low-interest per-entry line ("skip unchanged", "exclude")
-// that only appears under --verbose, in dry and real runs alike.
+// that only appears under --verbose, in dry and real runs alike. --json owns
+// stdout for the machine-readable summary, so it suppresses these too.
 func (r *runner) verbose(format string, a ...any) {
-	if !r.opts.Verbose {
+	if !r.opts.Verbose || r.opts.JSON {
 		return
 	}
 	r.outMu.Lock()
@@ -419,11 +420,12 @@ func (r *runner) verbose(format string, a ...any) {
 }
 
 // item prints one per-entry action line (copy, update, mkdir, link, hardlink,
-// delete). In a dry run these lines ARE the product, so they print by default
-// and only --quiet suppresses them; in a real run they print under --verbose
-// only.
+// delete). In a dry run these lines ARE the product, so they print by default;
+// --quiet suppresses them, as does --json, which owns stdout for the
+// machine-readable summary (human lines would corrupt the stream). In a real
+// run they print under --verbose only.
 func (r *runner) item(format string, a ...any) {
-	if r.opts.Quiet || (!r.opts.DryRun && !r.opts.Verbose) {
+	if r.opts.Quiet || r.opts.JSON || (!r.opts.DryRun && !r.opts.Verbose) {
 		return
 	}
 	r.outMu.Lock()

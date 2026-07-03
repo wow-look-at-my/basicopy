@@ -202,3 +202,83 @@ func TestIncludeTrailingSlashDirOnly(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(dst, "src", "sub", "vendor"))
 	assert.True(t, os.IsNotExist(statErr), "the vendor FILE stays excluded; only the dir is re-included")
 }
+
+// TestExcludeTrailingSlashIgnoresSymlinkToDir: a dir-only pattern must not
+// match a symlink even when its target is a directory -- the entry itself is a
+// link, not a directory (Lstat semantics, matching rsync).
+func TestExcludeTrailingSlashIgnoresSymlinkToDir(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "real_dir", "a.txt"), []byte("a"), 0o644)
+	require.NoError(t, os.Symlink("real_dir", filepath.Join(src, "node_modules")))
+	dst := filepath.Join(root, "dst")
+
+	o := &options.Options{
+		Sources: []string{src}, TargetDir: dst,
+		Exclude: []string{"node_modules/"}, NoFollowSymlinks: true, Progress: "auto",
+	}
+	require.NoError(t, o.Validate())
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Failed)
+	assert.EqualValues(t, 1, sum.Symlinks, "a symlink named node_modules must survive a dir-only exclude")
+	tgt, err := os.Readlink(filepath.Join(dst, "src", "node_modules"))
+	require.NoError(t, err)
+	assert.Equal(t, "real_dir", tgt)
+}
+
+// TestMirrorMultiSourceSweepsEachRoot: plain --mirror with several sources
+// still prunes extraneous entries under every per-source nested root.
+func TestMirrorMultiSourceSweepsEachRoot(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "a")
+	b := filepath.Join(root, "b")
+	writeFile(t, filepath.Join(a, "keep_a.txt"), []byte("a"), 0o644)
+	writeFile(t, filepath.Join(b, "keep_b.txt"), []byte("b"), 0o644)
+	dst := filepath.Join(root, "dst")
+	writeFile(t, filepath.Join(dst, "a", "stale_a.txt"), []byte("x"), 0o644)
+	writeFile(t, filepath.Join(dst, "b", "stale_b.txt"), []byte("y"), 0o644)
+
+	o := &options.Options{Sources: []string{a, b}, TargetDir: dst, Mirror: true, Progress: "auto"}
+	require.NoError(t, o.Validate())
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Failed)
+	assert.EqualValues(t, 2, sum.Deleted)
+	for _, p := range []string{filepath.Join(dst, "a", "stale_a.txt"), filepath.Join(dst, "b", "stale_b.txt")} {
+		_, statErr := os.Stat(p)
+		assert.True(t, os.IsNotExist(statErr), "extraneous %s must be mirrored away", p)
+	}
+	_, e1 := os.Stat(filepath.Join(dst, "a", "keep_a.txt"))
+	assert.NoError(t, e1)
+	_, e2 := os.Stat(filepath.Join(dst, "b", "keep_b.txt"))
+	assert.NoError(t, e2)
+}
+
+// TestMirrorSkipsFailedSource: a source that fails its walk guards (here: it
+// doesn't exist) must not have its destination swept -- with the old
+// sources-derived sweep, one mistyped source emptied that source's whole
+// destination tree.
+func TestMirrorSkipsFailedSource(t *testing.T) {
+	root := t.TempDir()
+	good := filepath.Join(root, "good")
+	writeFile(t, filepath.Join(good, "keep.txt"), []byte("k"), 0o644)
+	dst := filepath.Join(root, "dst")
+	// Destination content whose source is missing (or was mistyped).
+	writeFile(t, filepath.Join(dst, "gone", "precious.txt"), []byte("p"), 0o644)
+	writeFile(t, filepath.Join(dst, "good", "stale.txt"), []byte("s"), 0o644)
+
+	o := &options.Options{
+		Sources:   []string{good, filepath.Join(root, "gone")},
+		TargetDir: dst, Mirror: true, Progress: "auto",
+	}
+	require.NoError(t, o.Validate())
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, sum.Failed, "the missing source is a per-source failure")
+	assert.EqualValues(t, 1, sum.Deleted, "only the healthy source's root is swept")
+	_, e1 := os.Stat(filepath.Join(dst, "gone", "precious.txt"))
+	assert.NoError(t, e1, "a failed source must never trigger a deletion sweep of its destination")
+	_, e2 := os.Stat(filepath.Join(dst, "good", "stale.txt"))
+	assert.True(t, os.IsNotExist(e2), "the healthy source still mirrors")
+}
