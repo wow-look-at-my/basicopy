@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 func write(t *testing.T, path string, data []byte, mtime time.Time) os.FileInfo {
@@ -27,19 +28,19 @@ func TestCompareQuick(t *testing.T) {
 	si := write(t, src, []byte("hello"), mt)
 
 	// Missing dst.
-	assert.True(t, Compare(src, si, dst, false).NeedCopy)
+	assert.True(t, Compare(vfs.Local, src, si, vfs.Local, dst, false).NeedCopy)
 
 	// Same size + mtime -> unchanged.
 	write(t, dst, []byte("world"), mt) // same length, same mtime
-	assert.False(t, Compare(src, si, dst, false).NeedCopy)
+	assert.False(t, Compare(vfs.Local, src, si, vfs.Local, dst, false).NeedCopy)
 
 	// Different size.
 	write(t, dst, []byte("longer"), mt)
-	assert.True(t, Compare(src, si, dst, false).NeedCopy)
+	assert.True(t, Compare(vfs.Local, src, si, vfs.Local, dst, false).NeedCopy)
 
 	// Same size, different mtime.
 	write(t, dst, []byte("world"), mt.Add(time.Hour))
-	assert.True(t, Compare(src, si, dst, false).NeedCopy)
+	assert.True(t, Compare(vfs.Local, src, si, vfs.Local, dst, false).NeedCopy)
 }
 
 func TestCompareChecksum(t *testing.T) {
@@ -51,11 +52,11 @@ func TestCompareChecksum(t *testing.T) {
 
 	// Same content, but different mtime -> checksum still says unchanged.
 	write(t, dst, []byte("identical"), mt.Add(time.Hour))
-	assert.False(t, Compare(src, si, dst, true).NeedCopy)
+	assert.False(t, Compare(vfs.Local, src, si, vfs.Local, dst, true).NeedCopy)
 
 	// Same size, different content -> changed.
 	write(t, dst, []byte("identicaX"), mt)
-	assert.True(t, Compare(src, si, dst, true).NeedCopy)
+	assert.True(t, Compare(vfs.Local, src, si, vfs.Local, dst, true).NeedCopy)
 }
 
 func TestCompareReasons(t *testing.T) {
@@ -65,7 +66,7 @@ func TestCompareReasons(t *testing.T) {
 	si := write(t, src, []byte("hello"), mt)
 
 	t.Run("missing dest is new", func(t *testing.T) {
-		v := Compare(src, si, filepath.Join(dir, "missing"), false)
+		v := Compare(vfs.Local, src, si, vfs.Local, filepath.Join(dir, "missing"), false)
 		assert.True(t, v.NeedCopy)
 		assert.Equal(t, "new", v.Reason)
 		assert.Nil(t, v.DstInfo)
@@ -74,7 +75,7 @@ func TestCompareReasons(t *testing.T) {
 	t.Run("non-regular dest is a type change", func(t *testing.T) {
 		d := filepath.Join(dir, "adir")
 		require.NoError(t, os.Mkdir(d, 0o755))
-		v := Compare(src, si, d, false)
+		v := Compare(vfs.Local, src, si, vfs.Local, d, false)
 		assert.True(t, v.NeedCopy)
 		assert.Equal(t, "type change", v.Reason)
 		assert.NotNil(t, v.DstInfo)
@@ -83,7 +84,7 @@ func TestCompareReasons(t *testing.T) {
 	t.Run("size difference reports old and new", func(t *testing.T) {
 		dst := filepath.Join(dir, "size")
 		write(t, dst, []byte("hi"), mt)
-		v := Compare(src, si, dst, false)
+		v := Compare(vfs.Local, src, si, vfs.Local, dst, false)
 		assert.True(t, v.NeedCopy)
 		assert.Equal(t, "size 2 -> 5", v.Reason)
 	})
@@ -91,7 +92,7 @@ func TestCompareReasons(t *testing.T) {
 	t.Run("mtime difference in default mode", func(t *testing.T) {
 		dst := filepath.Join(dir, "mtime")
 		write(t, dst, []byte("world"), mt.Add(time.Hour))
-		v := Compare(src, si, dst, false)
+		v := Compare(vfs.Local, src, si, vfs.Local, dst, false)
 		assert.True(t, v.NeedCopy)
 		assert.Equal(t, "mtime differs", v.Reason)
 	})
@@ -99,7 +100,7 @@ func TestCompareReasons(t *testing.T) {
 	t.Run("content difference in checksum mode", func(t *testing.T) {
 		dst := filepath.Join(dir, "content")
 		write(t, dst, []byte("HELLO"), mt)
-		v := Compare(src, si, dst, true)
+		v := Compare(vfs.Local, src, si, vfs.Local, dst, true)
 		assert.True(t, v.NeedCopy)
 		assert.Equal(t, "content differs", v.Reason)
 	})
@@ -108,7 +109,7 @@ func TestCompareReasons(t *testing.T) {
 		dst := filepath.Join(dir, "mode")
 		write(t, dst, []byte("world"), mt) // default mode: size+mtime match
 		require.NoError(t, os.Chmod(dst, 0o600))
-		v := Compare(src, si, dst, false)
+		v := Compare(vfs.Local, src, si, vfs.Local, dst, false)
 		assert.False(t, v.NeedCopy)
 		assert.True(t, v.ModeDiff)
 		assert.False(t, v.TimeDiff)
@@ -119,7 +120,7 @@ func TestCompareReasons(t *testing.T) {
 	t.Run("checksum-verified mtime drift wants a touchup", func(t *testing.T) {
 		dst := filepath.Join(dir, "touch")
 		write(t, dst, []byte("hello"), mt.Add(2*time.Hour))
-		v := Compare(src, si, dst, true)
+		v := Compare(vfs.Local, src, si, vfs.Local, dst, true)
 		assert.False(t, v.NeedCopy)
 		assert.True(t, v.TimeDiff)
 		assert.False(t, v.ModeDiff)
@@ -128,7 +129,7 @@ func TestCompareReasons(t *testing.T) {
 	t.Run("mtime within tolerance needs no touchup", func(t *testing.T) {
 		dst := filepath.Join(dir, "close")
 		write(t, dst, []byte("hello"), mt.Add(500*time.Millisecond))
-		v := Compare(src, si, dst, true)
+		v := Compare(vfs.Local, src, si, vfs.Local, dst, true)
 		assert.False(t, v.NeedCopy)
 		assert.False(t, v.TimeDiff)
 	})
@@ -145,7 +146,7 @@ func BenchmarkHashFile(b *testing.B) {
 	b.SetBytes(size)
 	b.ReportAllocs()
 	for b.Loop() {
-		_, err := hashFile(path)
+		_, err := hashFile(vfs.Local, path)
 		require.Nil(b, err)
 
 	}

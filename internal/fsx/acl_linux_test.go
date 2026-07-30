@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 func requireACLTools(t *testing.T) string {
@@ -43,7 +44,7 @@ func TestCopyFilePreservesLinuxACL(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := filepath.Join(dir, "dst")
-	_, err = CopyFile(src, dst, info, CopyOptions{Preserve: true})
+	_, err = CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Preserve: true})
 	require.NoError(t, err)
 	assert.Equal(t, aclText(t, src), aclText(t, dst))
 }
@@ -59,6 +60,6 @@ func TestApplyMetaPreservesLinuxDefaultACL(t *testing.T) {
 	info, err := os.Lstat(src)
 	require.NoError(t, err)
 
-	require.NoError(t, ApplyMeta(src, dst, info, true))
+	require.NoError(t, ApplyMeta(vfs.Local, src, vfs.Local, dst, info, true))
 	assert.Equal(t, aclText(t, src), aclText(t, dst))
 }

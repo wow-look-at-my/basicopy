@@ -1,7 +1,32 @@
 # basicopy — developer notes
 
-An auto-scaling, robocopy-grade local file copier. See `README.md` for the user
-story and flags; this file is for working on the code.
+An auto-scaling, robocopy-grade file copier, local or over SSH. See `README.md`
+for the user story and flags; this file is for working on the code.
+
+## The rule that outranks everything else: no tuning knobs
+
+basicopy exists because `robocopy /MT:n` makes you *guess* a thread count and
+`rsync` makes you assemble a flag soup. **A tuning flag is a bug report against
+the controller.** If a setting could be measured, it MUST be measured — at
+runtime, on the live signal, with no user involvement.
+
+- **Not fully automatic is not an optimization.** A performance option the user
+  has to discover, understand, and set correctly is a waste of everyone's time:
+  almost nobody sets it, the people who do mostly set it wrong, and it exists
+  only because the automatic path was not written. Write the automatic path.
+- **"Add a flag for it" is never the answer** to "this is faster in some
+  situations". Find the signal that distinguishes those situations, feed it to
+  the controller, and let the loop decide (throughput plateau is usually it).
+- **The existing flags are not precedent.** `--max-threads` and `--buffer` are
+  *ceilings and escape hatches* for shared machines, not tuning dials, and the
+  list does not grow. Behavior flags (`--mirror`, `--checksum`, `--dry-run`) say
+  *what to do*, never *how fast to do it*.
+- **No environment variables, no config file, no `-o` passthrough** for
+  performance either — same rule, different spelling.
+- Applies to remote copies exactly as it does to local ones: the SSH connection
+  pool widens itself on the plateau signal (`docs/ssh.md`), and everything about
+  *how* to reach a host comes from the user's own `~/.ssh/config`, which they
+  already maintain for every other tool.
 
 ## Build & test
 

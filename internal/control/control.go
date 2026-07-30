@@ -85,6 +85,12 @@ func New(min, max, start int) *Controller {
 // W returns the current worker limit.
 func (c *Controller) W() int { return c.w }
 
+// Steady reports that the controller is holding a plateau rather than probing:
+// W is not mid-change and its effect is not still settling. A second controller
+// sharing the same throughput signal (the SSH connection scaler) waits for this
+// so the two loops don't measure each other's experiments.
+func (c *Controller) Steady() bool { return c.ph == holding && c.dwell == 0 }
+
 func (c *Controller) canGrow(s Sample) bool {
 	if s.SysCPU >= 0 && s.SysCPU > c.CPUCeil {
 		return false

@@ -6,9 +6,11 @@ import (
 	"sync/atomic"
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 type dirState struct {
+	srcFS    vfs.FS
 	src, dst string
 	info     os.FileInfo
 	pending  atomic.Int64
@@ -30,19 +32,19 @@ func metadataWorkerCount() int {
 func (r *runner) metadataWorker() {
 	defer r.metaWg.Done()
 	for d := range r.metaJobs {
-		if err := fsx.ApplyMeta(d.src, d.dst, d.info, r.copyOpts.Preserve); err != nil {
-			r.warn("metadata on %s: %v", d.dst, err)
+		if err := fsx.ApplyMeta(d.srcFS, d.src, r.dfs, d.dst, d.info, r.copyOpts.Preserve); err != nil {
+			r.warn("metadata on %s: %v", r.dfs.Display(d.dst), err)
 		}
 		r.dirMetaDone.Add(1)
 	}
 }
 
-func (r *runner) newDirState(src, dst string, info os.FileInfo) *dirState {
+func (r *runner) newDirState(srcFS vfs.FS, src, dst string, info os.FileInfo) *dirState {
 	if r.opts.DryRun || !r.copyOpts.Preserve {
 		return nil
 	}
 	r.dirMetaTotal.Add(1)
-	return &dirState{src: src, dst: dst, info: info}
+	return &dirState{srcFS: srcFS, src: src, dst: dst, info: info}
 }
 
 func (r *runner) addDirWork(d *dirState) {

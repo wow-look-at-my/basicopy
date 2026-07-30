@@ -1,7 +1,9 @@
 // Package fsx holds the low-level filesystem copy primitives: content copying
 // (with crash-safe temp-file + atomic rename), sparse handling, preallocation,
 // and metadata preservation. Fast in-kernel paths (copy_file_range, clonefile,
-// CopyFileEx) are layered on in build-tagged files; copy.go is the portable core.
+// CopyFileEx) are layered on in build-tagged files and are used when both sides
+// are local files; copy.go is the portable core, and the same core carries a
+// copy to or from a remote host over SFTP.
 package fsx
 
 import (
@@ -9,8 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
+
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 // DefaultBufSize is the portable fallback buffer used when no device-adaptive
@@ -48,16 +51,17 @@ var ErrCanceled = errors.New("copy canceled")
 // canceled reports whether the caller asked in-flight copies to stop.
 func (o *CopyOptions) canceled() bool { return o.Cancel != nil && o.Cancel() }
 
-// CopyFile copies the regular file at src to dst, crash-safely: the bytes are
-// written to a temporary file in dst's directory, metadata is applied, and the
-// temp file is atomically renamed into place. An interrupted copy therefore never
-// leaves a partial file at the final path. info is src's Lstat result and is used
-// for metadata preservation. It returns the number of bytes copied.
-func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
+// CopyFile copies the regular file at src on srcFS to dst on dstFS, crash-safely:
+// the bytes are written to a temporary file in dst's directory, metadata is
+// applied, and the temp file is atomically renamed into place. An interrupted
+// copy therefore never leaves a partial file at the final path. info is src's
+// Lstat result and is used for metadata preservation. It returns the number of
+// bytes copied.
+func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 	if o.canceled() {
 		return 0, ErrCanceled
 	}
-	in, err := os.Open(src)
+	in, err := srcFS.Open(src)
 	if err != nil {
 		return 0, err
 	}
@@ -68,57 +72,69 @@ func CopyFile(src, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 		perm = info.Mode().Perm()
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".basicopy-tmp-*")
+	tmp, err := dstFS.CreateTemp(dstFS.Dir(dst), ".basicopy-tmp-*")
 	if err != nil {
-		return 0, fmt.Errorf("create temp for %s: %w", dst, err)
+		return 0, fmt.Errorf("create temp for %s: %w", dstFS.Display(dst), err)
 	}
 	tmpName := tmp.Name()
 	committed := false
 	defer func() {
 		if !committed {
 			tmp.Close()
-			os.Remove(tmpName)
+			dstFS.Remove(tmpName)
 		}
 	}()
 
-	n, err := copyData(tmp, in, info, o)
+	n, err := copyContents(tmp, in, info, o)
 	if err != nil {
-		return n, fmt.Errorf("copy %s -> %s: %w", src, dst, err)
+		return n, fmt.Errorf("copy %s -> %s: %w", srcFS.Display(src), dstFS.Display(dst), err)
 	}
 
 	if err := tmp.Chmod(perm); err != nil && !metaUnsupported(err) {
-		return n, fmt.Errorf("chmod %s: %w", tmpName, err)
+		return n, fmt.Errorf("chmod %s: %w", dstFS.Display(tmpName), err)
 	}
 	if o.Preserve && info != nil {
 		// Owner/xattr applied to the temp path so the rename publishes a fully
 		// formed file; times are applied after close (below) for the same reason.
-		if err := preserveOwner(tmpName, info); err != nil {
+		if err := preserveOwner(srcFS, info, dstFS, tmpName); err != nil {
 			return n, err
 		}
-		if err := copyXattrs(src, tmpName, false); err != nil {
+		if err := copyXattrsFS(srcFS, src, dstFS, tmpName, false); err != nil {
 			return n, err
 		}
 	}
 	if o.Fsync {
-		if err := tmp.Sync(); err != nil {
-			return n, fmt.Errorf("fsync %s: %w", tmpName, err)
+		if err := tmp.Sync(); err != nil && !metaUnsupported(err) {
+			return n, fmt.Errorf("fsync %s: %w", dstFS.Display(tmpName), err)
 		}
 	}
 	if err := tmp.Close(); err != nil {
-		return n, fmt.Errorf("close %s: %w", tmpName, err)
+		return n, fmt.Errorf("close %s: %w", dstFS.Display(tmpName), err)
 	}
 
 	if o.Preserve && info != nil {
-		if err := preserveTimes(tmpName, info); err != nil {
+		if err := preserveTimes(dstFS, tmpName, info); err != nil {
 			return n, err
 		}
 	}
 
-	if err := os.Rename(tmpName, dst); err != nil {
-		return n, fmt.Errorf("rename %s -> %s: %w", tmpName, dst, err)
+	if err := dstFS.Rename(tmpName, dst); err != nil {
+		return n, fmt.Errorf("rename %s -> %s: %w", dstFS.Display(tmpName), dstFS.Display(dst), err)
 	}
 	committed = true
 	return n, nil
+}
+
+// copyContents moves the bytes, taking the platform fast paths (reflink, sparse
+// hole-skipping, copy_file_range) only when both ends are real local files. A
+// remote end is an SFTP handle, so it takes the portable streaming path.
+func copyContents(dst, src vfs.File, info os.FileInfo, o CopyOptions) (int64, error) {
+	dstFile, dstLocal := dst.(*os.File)
+	srcFile, srcLocal := src.(*os.File)
+	if dstLocal && srcLocal {
+		return copyData(dstFile, srcFile, info, o)
+	}
+	return plainCopy(dst, src, o)
 }
 
 // bufPool recycles copy buffers across files so a run over many files does not
@@ -143,12 +159,14 @@ func putBuf(b *[]byte) { bufPool.Put(b) }
 
 // plainCopy is the portable buffered fallback: a streamed copy from the current
 // offsets of src to dst in o.BufSize chunks. It is shared by the platform
-// copyData functions. It deliberately uses an explicit read/write loop rather
-// than io.CopyBuffer: io.CopyBuffer would delegate to *os.File's ReaderFrom and
-// copy through its own fixed 32 KiB buffer, ignoring the buffer size entirely
-// (32x the intended syscall count) — and the loop is also where progress and
-// cancellation are handled.
-func plainCopy(dst, src *os.File, o CopyOptions) (int64, error) {
+// copyData functions and used for every copy with a remote end. It deliberately
+// uses an explicit read/write loop rather than io.CopyBuffer: io.CopyBuffer would
+// delegate to *os.File's ReaderFrom and copy through its own fixed 32 KiB buffer,
+// ignoring the buffer size entirely (32x the intended syscall count) — and the
+// loop is also where progress and cancellation are handled. Large reads and
+// writes matter even more over SFTP, where the client splits a big buffer into
+// many packets in flight at once instead of one round trip per 32 KiB.
+func plainCopy(dst io.Writer, src io.Reader, o CopyOptions) (int64, error) {
 	bufSize := o.BufSize
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize

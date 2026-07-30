@@ -4,6 +4,11 @@
 // walk goroutine so a child's parent always exists before the child is scheduled;
 // directory metadata is applied once each directory's own child entries are done
 // so file writes don't bump directory mtimes back.
+//
+// Either end may be a remote host written as "[user@]host:/path": every
+// filesystem call goes through the vfs seam, so the walk, the worker pool, the
+// controller, and the mirror pass are the same code for a local disk and for an
+// SSH connection.
 package engine
 
 import (
@@ -12,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -22,6 +26,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/options"
 	"github.com/wow-look-at-my/basicopy/internal/scan"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 // Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
@@ -59,11 +64,16 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		gate:        newGate(maxW, initW),
 		jobs:        make(chan fileJob, 1024),
 		metaJobs:    make(chan *dirState, 1024),
+		reg:         vfs.NewRegistry(),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
 			Fsync:    opts.Fsync,
 			BufSize:  int(opts.BufferSize),
 		},
+	}
+	defer r.reg.Close()
+	if err := r.resolveTarget(); err != nil {
+		return r.summary(), err
 	}
 	// Stream per-chunk byte progress into a live counter so the watchdog, progress
 	// line, and autoscaler see a large file advancing mid-copy — not a flat line
@@ -130,6 +140,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 }
 
 type fileJob struct {
+	srcFS    vfs.FS
 	src, dst string
 	info     os.FileInfo
 	parent   *dirState
@@ -149,6 +160,15 @@ type fileJob struct {
 type runner struct {
 	opts     *options.Options
 	copyOpts fsx.CopyOptions
+
+	// reg owns the connections to any remote hosts involved; dfs is the
+	// destination filesystem (local or one remote host) and targetDir /
+	// targetFile are the destination paths as they exist on dfs, with any
+	// "host:" prefix stripped off.
+	reg        *vfs.Registry
+	dfs        vfs.FS
+	targetDir  string
+	targetFile string
 
 	gate *gate
 	jobs chan fileJob
@@ -188,6 +208,7 @@ type runner struct {
 	aborted error
 
 	// Walk-goroutine-owned state (no locking needed).
+	noFileIDsNoted bool // the "no inode identity over SSH" warning has been said
 	onStack     map[string]bool
 	hardlinkMap map[string]hlPrimary // inode key -> primary destination
 	hardlinks   []linkEnt            // secondary links to create after all copies
@@ -200,7 +221,31 @@ type runner struct {
 // deletes only under roots recorded here, so a source that failed its safety
 // guards (or didn't exist) can never have its destination -- or, in contents
 // mode, itself -- swept as "extraneous".
-type mirrorRoot struct{ dest, src string }
+type mirrorRoot struct {
+	srcFS     vfs.FS
+	dest, src string
+}
+
+// resolveTarget splits the destination argument into the filesystem it lives on
+// (dialing the host if it is remote) and the path on that filesystem, so the
+// rest of the engine never parses a "host:" prefix again.
+func (r *runner) resolveTarget() error {
+	arg := r.opts.TargetDir
+	if arg == "" {
+		arg = r.opts.TargetFile
+	}
+	dfs, path, err := r.reg.Resolve(arg)
+	if err != nil {
+		return err
+	}
+	r.dfs = dfs
+	if r.opts.TargetDir != "" {
+		r.targetDir = path
+	} else {
+		r.targetFile = path
+	}
+	return nil
+}
 
 // workerCount returns the gate ceiling and its initial limit. With --max-threads
 // the count is pinned; otherwise it scales with CPU count (the M4 controller will
@@ -262,13 +307,13 @@ func retryBackoff(attempt int) time.Duration {
 func (r *runner) copyOne(job fileJob) {
 	reason := job.reason
 	if job.checkUnchanged {
-		v := scan.Compare(job.src, job.info, job.dst, r.opts.Checksum)
+		v := scan.Compare(job.srcFS, job.src, job.info, r.dfs, job.dst, r.opts.Checksum)
 		if !v.NeedCopy {
 			// Undo the discovery accounting: these bytes will never move, so
 			// the live progress denominator and ETA must not keep counting them.
 			r.totalFiles.Add(-1)
 			r.totalBytes.Add(-job.info.Size())
-			r.finishUnchangedFile(job.dst, job.info, v)
+			r.finishUnchangedFile(job.srcFS, job.dst, job.info, v)
 			return
 		}
 		reason = v.Reason
@@ -281,7 +326,7 @@ func (r *runner) copyOne(job fileJob) {
 		err error
 	)
 	for attempt := 0; ; attempt++ {
-		n, err = fsx.CopyFile(job.src, job.dst, job.info, r.copyOpts)
+		n, err = fsx.CopyFile(job.srcFS, job.src, r.dfs, job.dst, job.info, r.copyOpts)
 		if err == nil || attempt >= maxRetries || !retryable(err) || r.abortErr() != nil {
 			break
 		}
@@ -296,7 +341,7 @@ func (r *runner) copyOne(job fileJob) {
 	}
 	r.files.Add(1)
 	r.bytes.Add(n)
-	r.item("copy %s (%s)", job.dst, reason)
+	r.item("copy %s (%s)", r.dfs.Display(job.dst), reason)
 }
 
 // finishUnchangedFile finalizes a destination file whose content is already up
@@ -305,21 +350,21 @@ func (r *runner) copyOne(job fileJob) {
 // counts as updated; otherwise it is a plain skip. Attribute application is
 // best-effort, matching the directory-metadata policy (a warning, not a
 // failure).
-func (r *runner) finishUnchangedFile(dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
+func (r *runner) finishUnchangedFile(srcFS vfs.FS, dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
 	if r.copyOpts.Preserve {
 		if diff := attrDiff(srcInfo, v); diff != "" {
 			if !r.opts.DryRun {
-				if err := fsx.SyncAttrs(dstPath, srcInfo, v.ModeDiff, v.OwnerDiff, v.TimeDiff); err != nil {
-					r.warn("metadata on %s: %v", dstPath, err)
+				if err := fsx.SyncAttrs(srcFS, srcInfo, r.dfs, dstPath, v.ModeDiff, v.OwnerDiff, v.TimeDiff); err != nil {
+					r.warn("metadata on %s: %v", r.dfs.Display(dstPath), err)
 				}
 			}
 			r.updated.Add(1)
-			r.item("%supdate %s (%s)", r.would(), dstPath, diff)
+			r.item("%supdate %s (%s)", r.would(), r.dfs.Display(dstPath), diff)
 			return
 		}
 	}
 	r.skipped.Add(1)
-	r.verbose("skip unchanged %s", dstPath)
+	r.verbose("skip unchanged %s", r.dfs.Display(dstPath))
 }
 
 // attrDiff renders a verdict's attribute drift as the itemize suffix, e.g.
@@ -450,46 +495,46 @@ func (r *runner) would() string {
 // the walk actually processed.
 func (r *runner) mirrorExtraneous() {
 	for _, m := range r.mirrorRoots {
-		r.mirrorDir(m.dest, m.src)
+		r.mirrorDir(m.srcFS, m.dest, m.src)
 	}
 }
 
-func (r *runner) mirrorDir(destDir, srcDir string) {
-	entries, err := os.ReadDir(destDir)
+func (r *runner) mirrorDir(srcFS vfs.FS, destDir, srcDir string) {
+	entries, err := r.dfs.ReadDir(destDir)
 	if err != nil {
 		return // destDir isn't a directory (e.g. a file source) or doesn't exist
 	}
 	removed := false
 	for _, e := range entries {
-		destPath := filepath.Join(destDir, e.Name())
-		srcPath := filepath.Join(srcDir, e.Name())
-		if _, err := os.Lstat(srcPath); err != nil {
+		destPath := r.dfs.Join(destDir, e.Name())
+		srcPath := srcFS.Join(srcDir, e.Name())
+		if _, err := srcFS.Lstat(srcPath); err != nil {
 			// No source counterpart -> extraneous; remove it.
 			if r.opts.DryRun {
 				r.deleted.Add(1)
-				r.item("would delete %s", destPath)
+				r.item("would delete %s", r.dfs.Display(destPath))
 				continue
 			}
-			if err := os.RemoveAll(destPath); err != nil {
-				r.fail(fmt.Errorf("delete %s: %w", destPath, err))
+			if err := r.dfs.RemoveAll(destPath); err != nil {
+				r.fail(fmt.Errorf("delete %s: %w", r.dfs.Display(destPath), err))
 				continue
 			}
 			removed = true
 			r.deleted.Add(1)
-			r.item("deleted %s", destPath)
+			r.item("deleted %s", r.dfs.Display(destPath))
 			continue
 		}
 		if e.IsDir() {
-			r.mirrorDir(destPath, srcPath)
+			r.mirrorDir(srcFS, destPath, srcPath)
 		}
 	}
 	if removed && r.copyOpts.Preserve {
 		// Deleting entries bumped destDir's mtime after the copy phase already
 		// applied directory metadata; restore it from the source so --mirror
 		// doesn't clobber preserved directory times.
-		if fi, err := os.Lstat(srcDir); err == nil {
-			if err := fsx.ApplyMeta(srcDir, destDir, fi, true); err != nil {
-				r.warn("metadata on %s: %v", destDir, err)
+		if fi, err := srcFS.Lstat(srcDir); err == nil {
+			if err := fsx.ApplyMeta(srcFS, srcDir, r.dfs, destDir, fi, true); err != nil {
+				r.warn("metadata on %s: %v", r.dfs.Display(destDir), err)
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 // TestCopyFileSparse verifies that a sparse source is copied with identical
@@ -32,7 +33,7 @@ func TestCopyFileSparse(t *testing.T) {
 	require.NoError(t, err)
 	dst := filepath.Join(dir, "sparse.out")
 	var moved int64
-	_, err = CopyFile(src, dst, info, CopyOptions{Preserve: true, Progress: func(d int64) { moved += d }})
+	_, err = CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Preserve: true, Progress: func(d int64) { moved += d }})
 	require.NoError(t, err)
 	assert.Positive(t, moved, "sparse copy must report progress for its data regions")
 	assert.LessOrEqual(t, moved, int64(size), "progress must not exceed the logical size")

@@ -46,6 +46,16 @@ func (g *gate) release() {
 	g.mu.Unlock()
 }
 
+// saturated reports whether every allowed slot is in use, i.e. the copy is
+// limited by the gate rather than by a shortage of work. The connection scaler
+// asks before spending an SSH handshake: with idle slots, more transport
+// parallelism cannot possibly help.
+func (g *gate) saturated() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inUse >= g.limit
+}
+
 // setLimit changes the number of concurrent holders allowed, clamped to [1,max].
 // The auto-scaling controller calls this every tick.
 func (g *gate) setLimit(n int) {
