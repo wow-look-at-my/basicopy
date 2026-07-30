@@ -49,6 +49,9 @@ func Parse(arg string) (Location, error) {
 	if hostname == "" {
 		return Location{}, fmt.Errorf("remote path %q has no host before the colon", arg)
 	}
+	if user == "" && strings.Contains(host, "@") {
+		return Location{}, fmt.Errorf("remote path %q has no user before the @", arg)
+	}
 	if path == "" {
 		path = "." // "host:" means the remote login directory
 	}

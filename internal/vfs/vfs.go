@@ -11,9 +11,12 @@
 package vfs
 
 import (
+	"errors"
 	"io"
 	"os"
 	"time"
+
+	"github.com/pkg/sftp"
 )
 
 // File is the subset of *os.File the copy primitives need, so an SFTP file
@@ -75,11 +78,31 @@ type FS interface {
 	CreateTemp(dir, pattern string) (File, error)
 
 	// Capability-dependent extras.
-	Avail(dir string) (int64, bool)                         // free bytes for the space guard
-	Owner(fi os.FileInfo) (uid, gid int, ok bool)            // Unix ownership
+	Avail(dir string) (int64, bool)                            // free bytes for the space guard
+	Owner(fi os.FileInfo) (uid, gid int, ok bool)              // Unix ownership
 	FileID(fi os.FileInfo) (key string, nlink uint64, ok bool) // inode identity (hardlinks)
-	Dev(fi os.FileInfo) (dev uint64, ok bool)                // st_dev (--one-file-system)
+	Dev(fi os.FileInfo) (dev uint64, ok bool)                  // st_dev (--one-file-system)
 	SameFile(a, b os.FileInfo) bool
+}
+
+// Unsupported reports whether err means "this filesystem cannot do that" rather
+// than "that failed". The standard library maps ENOSYS/ENOTSUP/EOPNOTSUPP to
+// errors.ErrUnsupported; an SFTP server answers the same thing with an
+// op-unsupported status, typically for an optional extension such as fsync or
+// hardlink. Callers use it to skip an operation instead of failing a copy whose
+// data is already safely written.
+func Unsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errors.ErrUnsupported) {
+		return true
+	}
+	var status *sftp.StatusError
+	if errors.As(err, &status) {
+		return status.FxCode() == sftp.ErrSSHFxOpUnsupported
+	}
+	return false
 }
 
 // Scalable is implemented by an FS whose transport parallelism can be widened at

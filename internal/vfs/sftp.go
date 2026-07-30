@@ -188,16 +188,16 @@ func (f *remoteFS) Rel(basepath, target string) (string, error) {
 
 func (f *remoteFS) Match(pattern, name string) (bool, error) { return path.Match(pattern, name) }
 
-func (f *remoteFS) Lstat(name string) (os.FileInfo, error)      { return f.client().Lstat(name) }
-func (f *remoteFS) Stat(name string) (os.FileInfo, error)       { return f.client().Stat(name) }
-func (f *remoteFS) ReadDir(name string) ([]os.FileInfo, error)   { return f.client().ReadDir(name) }
-func (f *remoteFS) Readlink(name string) (string, error)         { return f.client().ReadLink(name) }
-func (f *remoteFS) Symlink(target, name string) error            { return f.client().Symlink(target, name) }
-func (f *remoteFS) Link(target, name string) error               { return f.client().Link(target, name) }
-func (f *remoteFS) Remove(name string) error                     { return f.client().Remove(name) }
-func (f *remoteFS) RemoveAll(name string) error                  { return f.client().RemoveAll(name) }
-func (f *remoteFS) Chmod(name string, mode os.FileMode) error    { return f.client().Chmod(name, mode) }
-func (f *remoteFS) Chown(name string, uid, gid int) error        { return f.client().Chown(name, uid, gid) }
+func (f *remoteFS) Lstat(name string) (os.FileInfo, error)     { return f.client().Lstat(name) }
+func (f *remoteFS) Stat(name string) (os.FileInfo, error)      { return f.client().Stat(name) }
+func (f *remoteFS) ReadDir(name string) ([]os.FileInfo, error) { return f.client().ReadDir(name) }
+func (f *remoteFS) Readlink(name string) (string, error)       { return f.client().ReadLink(name) }
+func (f *remoteFS) Symlink(target, name string) error          { return f.client().Symlink(target, name) }
+func (f *remoteFS) Link(target, name string) error             { return f.client().Link(target, name) }
+func (f *remoteFS) Remove(name string) error                   { return f.client().Remove(name) }
+func (f *remoteFS) RemoveAll(name string) error                { return f.client().RemoveAll(name) }
+func (f *remoteFS) Chmod(name string, mode os.FileMode) error  { return f.client().Chmod(name, mode) }
+func (f *remoteFS) Chown(name string, uid, gid int) error      { return f.client().Chown(name, uid, gid) }
 
 func (f *remoteFS) Chtimes(name string, atime, mtime time.Time) error {
 	return f.client().Chtimes(name, atime, mtime)

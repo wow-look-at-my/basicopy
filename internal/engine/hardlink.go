@@ -55,16 +55,18 @@ func (r *runner) handleRegular(root *srcRoot, srcPath, dstPath string, fi os.Fil
 	r.enqueueFile(root, srcPath, dstPath, fi, parent, true, "")
 }
 
-// noteNoFileIDs warns once that hardlinked source files cannot be recognised as
-// such. SFTP carries no inode number or link count, so a remote source's linked
-// files are copied as independent files -- a real difference in what lands in
-// the destination, so it is said out loud rather than silently absorbed.
+// noteNoFileIDs says once that hardlinked source files cannot be recognised as
+// such: SFTP carries no inode number or link count, so a remote source's linked
+// files are copied as independent files. It is a --verbose line rather than a
+// warning because the condition is a property of the protocol, not of this
+// tree -- it would otherwise print on every remote copy, including the vast
+// majority that contain no hardlinks at all.
 func (r *runner) noteNoFileIDs(fsys vfs.FS) {
 	if r.noFileIDsNoted || fsys.Local() {
 		return
 	}
 	r.noFileIDsNoted = true
-	r.warn("%s: SSH exposes no inode identity, so hardlinked source files are copied individually", fsys.Host())
+	r.verbose("%s: SSH exposes no inode identity; hardlinks in the source cannot be detected", fsys.Host())
 }
 
 // handleMultiLink handles one path to a multiply-linked source inode. The first

@@ -1,7 +1,6 @@
 package fsx
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -17,7 +16,7 @@ import (
 // good data. The standard library maps ENOSYS, ENOTSUP, and EOPNOTSUPP to
 // errors.ErrUnsupported, so the check is portable.
 func metaUnsupported(err error) bool {
-	return errors.Is(err, errors.ErrUnsupported)
+	return vfs.Unsupported(err)
 }
 
 // ApplyMeta applies preserved metadata (mode, owner, xattrs, times) to an

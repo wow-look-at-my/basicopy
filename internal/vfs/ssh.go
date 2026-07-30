@@ -11,29 +11,27 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// transport is one live ssh subprocess speaking the SFTP subsystem: the pipes
-// the client talks over, plus a shutdown func.
-type transport struct {
-	stdout io.Reader
-	stdin  io.WriteCloser
-	close  func() error
+// Transport is one live channel to a host's SFTP subsystem: the pipes the
+// client talks over, plus a shutdown func.
+type Transport struct {
+	Stdout io.Reader
+	Stdin  io.WriteCloser
+	Close  func() error
 }
 
-// startTransport is a var so tests can substitute an in-process SFTP server for
-// a real ssh subprocess.
-var startTransport = startSSH
+// StartTransport opens that channel. It is a var so tests can run an in-process
+// SFTP server instead of a real ssh subprocess; nothing outside tests replaces
+// it, and it is not reachable from the command line.
+var StartTransport = startSSH
 
-// startSSH runs "ssh [-p port] [-l user] -s host sftp" and returns its stdio
-// pipes. Shelling out to the ssh binary (as rsync does) is deliberate: every
-// OpenSSH mechanism the user already relies on -- ~/.ssh/config host aliases and
-// identities, the agent, ProxyJump, known_hosts, password and 2FA prompts --
-// keeps working, and basicopy grows no connection settings of its own.
+// sshArgs builds the ssh command line: "ssh [-o BatchMode=yes] [-p port]
+// [-l user] -s host sftp".
 //
 // extra marks a connection opened to widen an existing pool. Those run with
 // BatchMode=yes so a host that needs an interactive credential can never stop a
 // running copy to ask for it a second time; the pool just stays as wide as it
 // already is.
-func startSSH(loc Location, extra bool) (*transport, error) {
+func sshArgs(loc Location, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
 		argv = append(argv, "-o", "BatchMode=yes")
@@ -44,8 +42,16 @@ func startSSH(loc Location, extra bool) (*transport, error) {
 	if loc.User != "" {
 		argv = append(argv, "-l", loc.User)
 	}
-	argv = append(argv, "-s", loc.Host, "sftp")
+	return append(argv, "-s", loc.Host, "sftp")
+}
 
+// startSSH runs ssh and returns its stdio pipes. Shelling out to the ssh binary
+// (as rsync does) is deliberate: every OpenSSH mechanism the user already relies
+// on -- ~/.ssh/config host aliases and identities, the agent, ProxyJump,
+// known_hosts, password and 2FA prompts -- keeps working, and basicopy grows no
+// connection settings of its own.
+func startSSH(loc Location, extra bool) (*Transport, error) {
+	argv := sshArgs(loc, extra)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stderr = os.Stderr // auth prompts and ssh diagnostics reach the user
 	stdin, err := cmd.StdinPipe()
@@ -59,7 +65,7 @@ func startSSH(loc Location, extra bool) (*transport, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start ssh: %w", err)
 	}
-	return &transport{stdout: stdout, stdin: stdin, close: func() error {
+	return &Transport{Stdout: stdout, Stdin: stdin, Close: func() error {
 		// The server exits when its stdin closes; kill it if it lingers.
 		_ = stdin.Close()
 		done := make(chan error, 1)
@@ -86,16 +92,16 @@ var clientOptions = []sftp.ClientOption{
 
 // dialConn opens one ssh connection and starts an SFTP session on it.
 func dialConn(loc Location, extra bool) (*conn, error) {
-	t, err := startTransport(loc, extra)
+	t, err := StartTransport(loc, extra)
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", loc.Host, err)
 	}
-	client, err := sftp.NewClientPipe(t.stdout, t.stdin, clientOptions...)
+	client, err := sftp.NewClientPipe(t.Stdout, t.Stdin, clientOptions...)
 	if err != nil {
-		_ = t.close()
+		_ = t.Close()
 		return nil, fmt.Errorf("start sftp session on %s: %w", loc.Host, err)
 	}
-	return &conn{client: client, close: t.close}, nil
+	return &conn{client: client, close: t.Close}, nil
 }
 
 // Dial connects to a remote location, returning an FS whose connection pool can

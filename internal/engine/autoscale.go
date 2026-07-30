@@ -17,7 +17,7 @@ import (
 // throughput signal.
 var (
 	controlInterval = 250 * time.Millisecond
-	connInterval    = 2 * time.Second
+	connInterval    = 1 * time.Second
 )
 
 // runController is the auto-scaling loop. It seeds the worker limit from the
@@ -56,7 +56,7 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case now := <-connTicker.C:
-			conns.tick(r, c, now)
+			conns.tick(r, c, r.reg.Remotes(), now)
 		case now := <-ticker.C:
 			nb := r.moved.Load()
 			dt := now.Sub(prevTime).Seconds()
@@ -135,22 +135,23 @@ type connScaler struct {
 }
 
 func newConnScaler() *connScaler {
-	return &connScaler{ctl: control.New(1, vfs.MaxConnections, 1)}
+	return &connScaler{ctl: control.New(1, vfs.MaxConnections, 1), reported: 1}
 }
 
-func (s *connScaler) tick(r *runner, workers *control.Controller, now time.Time) {
-	remotes := r.reg.Remotes()
+func (s *connScaler) tick(r *runner, workers *control.Controller, remotes []vfs.FS, now time.Time) {
 	if len(remotes) == 0 {
 		return
 	}
 	bytes := r.moved.Load()
 
-	// Only judge a connection change while the worker side is saturated and
-	// settled: otherwise the throughput swing being measured belongs to the
-	// worker controller's own probing, and the two loops would chase each
-	// other's noise.
-	if !r.gate.saturated() || !workers.Steady() {
-		s.prevBytes, s.prevTime, s.primed = bytes, now, false
+	// Two conditions have to hold before another connection could possibly be
+	// the answer: every worker slot is busy (with idle slots, the transport is
+	// not what's limiting the copy), and the worker controller has found its
+	// plateau (during its initial climb, every throughput change is its own
+	// doing). Until then, keep re-baselining so the first real sample measures
+	// a clean window.
+	if !r.gate.saturated() || !workers.Plateaued() {
+		s.prevBytes, s.prevTime, s.primed = bytes, now, true
 		return
 	}
 	if !s.primed {

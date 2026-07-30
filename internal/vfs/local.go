@@ -12,16 +12,16 @@ var Local FS = localFS{}
 
 type localFS struct{}
 
-func (localFS) Local() bool                 { return true }
-func (localFS) Host() string                { return "" }
-func (localFS) Display(path string) string  { return path }
-func (localFS) Close() error                { return nil }
-func (localFS) Separator() string           { return string(filepath.Separator) }
-func (localFS) Join(elem ...string) string  { return filepath.Join(elem...) }
-func (localFS) Clean(p string) string       { return filepath.Clean(p) }
-func (localFS) Dir(p string) string         { return filepath.Dir(p) }
-func (localFS) Base(p string) string        { return filepath.Base(p) }
-func (localFS) IsAbs(p string) bool         { return filepath.IsAbs(p) }
+func (localFS) Local() bool                  { return true }
+func (localFS) Host() string                 { return "" }
+func (localFS) Display(path string) string   { return path }
+func (localFS) Close() error                 { return nil }
+func (localFS) Separator() string            { return string(filepath.Separator) }
+func (localFS) Join(elem ...string) string   { return filepath.Join(elem...) }
+func (localFS) Clean(p string) string        { return filepath.Clean(p) }
+func (localFS) Dir(p string) string          { return filepath.Dir(p) }
+func (localFS) Base(p string) string         { return filepath.Base(p) }
+func (localFS) IsAbs(p string) bool          { return filepath.IsAbs(p) }
 func (localFS) Abs(p string) (string, error) { return filepath.Abs(p) }
 
 func (localFS) Rel(basepath, target string) (string, error) { return filepath.Rel(basepath, target) }
