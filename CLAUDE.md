@@ -99,10 +99,14 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
   or `filepath.*` on a copy path: each side of a copy carries a `vfs.FS` (which
   also supplies the path helpers, POSIX for remote). Adding a capability means
   adding it once.
-- **Connections scale like workers.** A remote FS holds a connection pool that a
-  second `control.Controller` widens, gated on "workers saturated AND the worker
-  controller has plateaued" -- never a flag. Extra connections use
-  `BatchMode=yes` so they can never prompt mid-run. See `docs/ssh.md`.
+- **One connection per concurrent transfer.** An sftp-server answers one request
+  at a time, so transfers sharing a connection run in sequence on the far side.
+  `vfs.remoteFS` dials on demand (cap 16, first connection reserved for
+  metadata); restraint comes from `W`, which is already measured. `docs/ssh.md`.
+- **A stall means grow, not stop.** `control.Sample.Blocked` (every worker busy,
+  nothing finished) makes the controller grow `W`: at zero throughput the plateau
+  test "the last increase didn't help" is true at every `W`, which used to pin
+  cloud-backed (OneDrive placeholder) copies to one file at a time.
 
 ## Testing notes
 
@@ -119,5 +123,8 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
 - Remote tests need no network, credentials, or `ssh` binary: they swap
   `vfs.StartTransport` for an in-process `pkg/sftp` server over pipes (see
   `internal/vfs/testserver_test.go`, `internal/engine/remote_test.go`), so the
-  real protocol code runs. The connection scaler is tested as pure logic in
-  `connscale_test.go`.
+  real protocol code runs.
+- That server answers requests concurrently, unlike a real sftp-server, so it
+  cannot show serialization. `engine/slowremote_test.go` proxies it into one
+  request at a time with delayed reads -- the only faithful model of a
+  cloud-backed remote, and the regression test for parallel transfers.

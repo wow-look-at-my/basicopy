@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // curve models achievable throughput as a function of worker count: a saturating
@@ -106,4 +107,55 @@ func TestLowKneeSettlesLowerThanHighKnee(t *testing.T) {
 	wlo := tailAvg(run(lo, curve{peak: 1e9, knee: 4}, nil, 500), 80)
 	whi := tailAvg(run(hi, curve{peak: 1e9, knee: 64}, nil, 500), 80)
 	assert.Less(t, wlo, whi, "a workload that saturates sooner should settle at a lower W")
+}
+
+// TestBlockedSampleGrowsW pins the case the plateau logic gets backwards. When
+// every stream is stuck waiting on the storage -- a cloud-backed file being
+// downloaded on first read, cold storage, a server answering one request at a
+// time -- throughput is zero, and "the last increase did not raise throughput"
+// is true of every W there is. Reverting on that evidence pins the copy at one
+// stream forever, which is exactly how such a copy ends up serialized.
+func TestBlockedSampleGrowsW(t *testing.T) {
+	c := New(1, 32, 1)
+	for i := 0; i < 40; i++ {
+		c.Update(Sample{Throughput: 0, SysCPU: -1, DevUtil: -1, Blocked: true})
+	}
+	assert.Equal(t, 32, c.W(), "a stalled copy must keep widening; nothing else overlaps the waiting")
+}
+
+// TestBlockedSampleWithoutTheFlagStalls is the control case: the same zero
+// throughput, not reported as blocked, must NOT grow -- that is the ordinary
+// "this is as fast as it gets" reading, and it is why the flag has to exist.
+func TestBlockedSampleWithoutTheFlagStalls(t *testing.T) {
+	c := New(1, 32, 1)
+	for i := 0; i < 40; i++ {
+		c.Update(Sample{Throughput: 0, SysCPU: -1, DevUtil: -1})
+	}
+	assert.LessOrEqual(t, c.W(), 2, "without the blocked flag a flat line reads as a plateau")
+}
+
+// TestBlockedGrowthRespectsGuards: being blocked is not a licence to ignore a
+// pinned machine.
+func TestBlockedGrowthRespectsGuards(t *testing.T) {
+	c := New(1, 32, 4)
+	for i := 0; i < 20; i++ {
+		c.Update(Sample{Throughput: 0, SysCPU: 0.99, DevUtil: -1, Blocked: true})
+	}
+	assert.Equal(t, 4, c.W(), "a saturated CPU still forbids growth")
+}
+
+// TestBlockedThenFlowingTrimsBack: once bytes move again the ordinary loop takes
+// over from wherever the stall left W, including trimming excess away.
+func TestBlockedThenFlowingTrimsBack(t *testing.T) {
+	c := New(1, 32, 1)
+	for i := 0; i < 20; i++ {
+		c.Update(Sample{Throughput: 0, SysCPU: -1, DevUtil: -1, Blocked: true})
+	}
+	require.Greater(t, c.W(), 1)
+
+	// A hard ceiling reached at a small W: with measurements available again,
+	// the ordinary loop must trim the streams the stall bought back down.
+	ws := run(c, curve{peak: 1e9, knee: 4, ceiling: 0.4e9}, nil, 1200)
+	assert.LessOrEqual(t, tailAvg(ws, 80), 12.0, "the excess a stall bought is trimmed once throughput can be measured")
+	assert.GreaterOrEqual(t, tailAvg(ws, 80), 2.0, "but not below what the ceiling needs")
 }

@@ -105,18 +105,16 @@ func Unsupported(err error) bool {
 	return false
 }
 
-// Scalable is implemented by an FS whose transport parallelism can be widened at
-// runtime -- today, the SSH connection pool behind a remote host. The engine's
-// controller drives it from the same throughput-plateau signal that sizes the
-// worker pool, so the number of connections is measured, never configured.
-type Scalable interface {
-	// SetWidth asks for n connections to be carrying work. Growth is
-	// asynchronous: the call never blocks on a handshake.
-	SetWidth(n int)
-	// Pool reports how many connections carry work, how many are open, and
-	// whether widening has been abandoned (a host that needs an interactive
-	// credential cannot be asked for one twice mid-run).
-	Pool() (width, open int, frozen bool)
+// Pooled is implemented by an FS backed by a self-sizing connection pool --
+// today, the SSH connections behind a remote host. It exists so a run can
+// report what the pool did, not so anything can steer it: the pool follows the
+// transfers asked of it, and how many of those run at once is already a
+// measured decision (see control.Controller).
+type Pooled interface {
+	// Pool reports how many connections are open and whether opening more has
+	// been abandoned (a host that needs an interactive credential cannot be
+	// asked for one twice mid-run).
+	Pool() (open int, frozen bool)
 }
 
 // SameHost reports whether two FS values address the same filesystem namespace,

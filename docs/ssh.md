@@ -52,51 +52,90 @@ There is deliberately **no** `--ssh`, `-e`, `-o`, `-i`, `-p`, or environment
 override. Those would only duplicate configuration the user already maintains
 for every other SSH tool, and each one is a way to get a copy wrong.
 
-## Connection scaling (automatic, like everything else)
+## Connections (automatic, like everything else)
 
-A copy starts with one connection and deep request pipelining: up to 64 SFTP
-requests of 32 KiB in flight per file, so the link's round-trip time is hidden
-instead of paid once per block. For the large majority of copies that is the
-whole story, and one connection is what the run uses start to finish.
+**One connection per file being transferred at that moment**, dialed on demand
+and capped at 16. That is not a performance tweak, it is what "parallel" means
+over SFTP: an sftp-server answers one request at a time, so two transfers
+sharing a connection are two transfers in a queue — the far side runs them one
+after the other however many workers the copy has.
 
-One connection cannot do everything, though. It is a single TCP flow (one
-congestion window; head-of-line blocking on a lossy long-haul link), encrypted
-by a single core (OpenSSH does cipher and MAC work on one thread), and served by
-a single `sftp-server` process on the far end that handles its requests in one
-serial loop. When any of those is the limit, more streams over the same
-connection cannot help — but another connection can.
+It is invisible on ordinary files, where each request is answered as fast as the
+disk allows. It is the entire story when a read has to *wait*:
 
-basicopy detects that condition instead of asking about it. A second controller
-— the same plateau-seeking loop that sizes the worker pool, `control.Controller`
-— watches throughput once per second and may widen the pool, but only while:
+- **Cloud-backed placeholders** (OneDrive/Dropbox files-on-demand) that must be
+  downloaded on first read.
+- Cold storage, a disk spinning up, a network filesystem behind the remote.
 
-1. **every worker slot is busy.** With idle slots the copy is short of work, not
-   short of transport, and another connection would change nothing.
-2. **the worker controller has found its plateau.** During its initial climb
-   every throughput change is the worker loop's own doing, and reading those
-   swings as evidence about connections would have the two loops chasing each
-   other.
+On one connection those wait one at a time, and a copy of such a tree runs at
+exactly one file's worth of latency after another — the thing a hand-written
+loop of parallel `scp` commands avoids, only because each `scp` brings its own
+server process.
 
-Then it behaves exactly like the worker loop: add a connection, and keep it only
-if the plateau rises. If throughput does not improve, the extra connection stops
-receiving work. Growth stops at `vfs.MaxConnections` (8); past a handful the
-handshakes cost more than the parallelism returns.
+How the pool grows:
+
+- A transfer takes a connection that is carrying none. Failing that, it takes
+  one that is carrying a transfer but has nothing outstanding right now — the
+  far side is keeping up, and queuing behind it costs nothing worth a handshake.
+- Otherwise the pool dials another connection and the transfer waits for it (or
+  for an earlier transfer to finish). Waiting is the point: a file handle cannot
+  move to another connection once it is opened, so piling onto a connection that
+  is already waiting is a decision you cannot take back.
+- At 16 connections, or after a dial fails, transfers share connections instead
+  of waiting.
+- Once there is more than one connection, the first is kept clear of transfers.
+  Directory listings and stats go there, so the walk never ends up queued behind
+  a file that takes a minute to read and stops feeding the workers.
+
+**What stops it running away** is that it never decides how much parallelism to
+use — it follows the transfers the copy already has in flight, and *that* number
+is the worker controller's measured decision. A copy that gains nothing from
+parallelism keeps a small `W` and therefore a small pool; a single-file copy uses
+exactly one connection; a copy of two files against a fast server usually stays
+on one, because the first connection is idle between requests whenever the second
+transfer starts.
+
+Two details make dialing safe rather than clever:
+
+- **Extra connections run with `BatchMode=yes` and `ConnectTimeout=10`.** A host
+  that needs an interactive credential can never be asked for it a second time
+  mid-copy, and a host that became unreachable fails the dial promptly instead of
+  leaving transfers waiting on a handshake that will never complete. Either way
+  the pool freezes at its current size and the copy continues. Neither option is
+  imposed on the first connection, which is the user's own ssh session.
+- **Dials happen one at a time**, in the background, so a run never opens a burst
+  of simultaneous handshakes (which `sshd`'s `MaxStartups` would start dropping).
+
+### Why not "just pipeline harder" on one connection
+
+Requests *are* pipelined — up to 64 in flight per file, which is what hides
+round-trip latency and is why a single connection is fine for ordinary files.
+But pipelining cannot fix a server that is *blocked*: the requests behind the
+blocked one are queued, not overlapped. Nor can it fix a single TCP flow's
+congestion window on a lossy long-haul link, or the fact that OpenSSH does cipher
+and MAC work for a connection on one core.
 
 Measured on this repo's test box (loopback SSH, 4 cores, 1.1 GiB in 60 files):
-13.0 s on one connection, 8.3 s once the loop widened to two — with no flags on
-either run.
+13.0 s confined to one connection, 3.8–5.1 s with the pool following the
+transfers (6–7 connections), no flags on either run. And on files that are slow
+to read, which is the case the pool exists for: `TestSlowRemoteReadsRunInParallel`
+takes 5.6 s pinned to one connection — exactly the sum of its delayed reads —
+and ~1.1 s with the pool.
 
-Two details make widening safe rather than clever:
+### What the worker pool does when nothing is moving
 
-- **Extra connections run with `BatchMode=yes`.** A host that needs an
-  interactive credential can never be asked for it a second time in the middle
-  of a copy. The dial fails immediately, the pool freezes at its current size,
-  and the run continues on the connection it already has.
-- **Widening never blocks a copy.** The handshake happens on its own goroutine;
-  workers keep using the existing connections until the new one is ready.
+The connection pool only helps if the copy keeps asking for concurrent
+transfers, and the controller that decides `W` had the same blind spot: its rule
+is "the last increase did not raise throughput, so `W` is high enough", and a
+stalled copy has *zero* throughput at every `W`. Zero is never greater than
+zero, so it would conclude one stream is enough and stay there.
 
-Narrowing does not close connections. Closing one mid-run would race in-flight
-file handles for no measurable gain, so the extras simply stop carrying work.
+So a stalled interval — every worker occupied, and not one byte, file, or
+directory finished — is reported to the controller as such (`control.Sample`'s
+`Blocked`), and it grows instead of concluding. A stall says nothing about `W`
+being too high, and the only harm it can do is leave latency un-overlapped.
+Once bytes flow again the ordinary plateau loop resumes and trims back whatever
+the stall bought.
 
 ## What SFTP cannot carry
 

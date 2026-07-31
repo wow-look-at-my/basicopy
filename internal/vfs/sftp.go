@@ -14,39 +14,35 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// MaxConnections caps how far a remote FS may widen its connection pool. One
-// connection with deep request pipelining saturates almost every link; the extra
-// connections exist for the cases a single one cannot cover (single-core cipher
-// throughput, the peer's serial sftp-server, one TCP flow on a lossy long-haul
-// link), and past a handful they only add handshakes.
-const MaxConnections = 8
-
-// conn is one ssh process carrying one SFTP session.
-type conn struct {
-	client *sftp.Client
-	close  func() error
-}
-
 // remoteFS is a host reached over SFTP. Paths are POSIX; capabilities the
 // protocol does not carry (inode identity, st_dev, xattrs) report unavailable so
 // the engine degrades instead of failing.
 //
-// It holds a pool of connections rather than one, because a single ssh
-// connection is a single TCP flow encrypted by a single core and served by a
-// single sftp-server process on the far end. The pool starts at one connection
-// and is widened only by the engine's controller, when more parallel streams
-// have stopped raising throughput — the same plateau signal that sizes the
-// worker pool (see SetWidth).
+// The pool: a copy gets one connection per file it is transferring
+// concurrently, up to MaxConnections, dialed on demand and kept for the run.
+// That is not an optimization, it is what "parallel" means here -- an SFTP
+// server handles one request at a time, so N transfers down one connection are
+// N transfers in a queue. It is the same reason a hand-written loop of parallel
+// scp commands beats a single sftp session on files that are slow to read
+// (cloud-backed placeholders being downloaded on first access, cold storage, a
+// disk spinning up): each scp brings its own server.
+//
+// How many transfers run at once is decided elsewhere, by the worker
+// controller, on measured throughput -- so the pool inherits that restraint
+// rather than needing its own. A copy that gains nothing from parallelism keeps
+// a small W and therefore a small pool; a single-file copy uses exactly one
+// connection.
 type remoteFS struct {
 	host   string // "[user@]host" for messages
 	prefix string // "[user@]host:" path prefix for output
 	dial   func() (*conn, error)
 
 	mu      sync.Mutex
+	free    *sync.Cond // woken when a transfer ends or a connection arrives
 	conns   []*conn
-	width   int  // connections currently carrying new work
-	dialing bool // a widen is in flight
-	frozen  bool // widening failed once; never retried
+	dialing bool // a dial is in flight
+	frozen  bool // dialing failed once; never retried
+	closed  bool // the FS has been closed; no more dialing
 
 	rr atomic.Uint64
 
@@ -55,16 +51,17 @@ type remoteFS struct {
 }
 
 // newRemoteFS wraps an established SFTP connection as an FS. host is the display
-// name; dial (optional) opens further connections to the same host when the
-// controller asks for more parallelism.
+// name; dial (optional) opens further connections to the same host as
+// concurrent transfers need them.
 func newRemoteFS(first *conn, host string, dial func() (*conn, error)) FS {
-	return &remoteFS{
+	f := &remoteFS{
 		host:   host,
 		prefix: host + ":",
 		conns:  []*conn{first},
-		width:  1,
 		dial:   dial,
 	}
+	f.free = sync.NewCond(&f.mu)
+	return f
 }
 
 func (f *remoteFS) Local() bool                { return false }
@@ -77,78 +74,48 @@ func (f *remoteFS) Dir(p string) string        { return path.Dir(p) }
 func (f *remoteFS) Base(p string) string       { return path.Base(p) }
 func (f *remoteFS) IsAbs(p string) bool        { return path.IsAbs(p) }
 
-// client picks the connection for the next operation, round-robin across the
-// active width.
-func (f *remoteFS) client() *sftp.Client {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n := f.width
-	if n > len(f.conns) {
-		n = len(f.conns)
-	}
-	if n <= 1 {
-		return f.conns[0].client
-	}
-	return f.conns[int(f.rr.Add(1)-1)%n].client
+// remoteFile is an open remote file bound to the connection it was opened on --
+// an SFTP handle is only valid there. It reports its own traffic so a handle
+// parked in a slow read shows up as a busy connection, and releases the
+// connection's transfer slot when it closes.
+type remoteFile struct {
+	*sftp.File
+	fs     *remoteFS
+	c      *conn
+	closed bool
 }
 
-// SetWidth asks for n connections to be carrying work. Growing dials one more
-// connection in the background (the caller is never blocked on a handshake);
-// shrinking simply stops routing new transfers to the extra connections, which
-// then sit idle -- closing them mid-run would race in-flight file handles for no
-// measurable gain.
-func (f *remoteFS) SetWidth(n int) {
-	if n < 1 {
-		n = 1
-	}
-	if n > MaxConnections {
-		n = MaxConnections
-	}
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if n <= len(f.conns) {
-		f.width = n
-		return
-	}
-	f.width = len(f.conns)
-	if f.frozen || f.dialing || f.dial == nil {
-		return
-	}
-	f.dialing = true
-	go f.widen()
+func (r *remoteFile) Read(p []byte) (int, error) {
+	r.c.begin()
+	n, err := r.File.Read(p)
+	r.c.finish()
+	return n, err
 }
 
-// widen opens one additional connection. A failure freezes the pool at its
-// current size: the usual cause is that the host needs an interactive
-// credential, which the extra connections deliberately refuse to prompt for.
-func (f *remoteFS) widen() {
-	c, err := f.dial()
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.dialing = false
-	if err != nil {
-		f.frozen = true
-		return
-	}
-	f.conns = append(f.conns, c)
-	f.width = len(f.conns)
+func (r *remoteFile) Write(p []byte) (int, error) {
+	r.c.begin()
+	n, err := r.File.Write(p)
+	r.c.finish()
+	return n, err
 }
 
-// Pool reports the connection pool's state: how many connections carry work, how
-// many are open, and whether widening has been given up on.
-func (f *remoteFS) Pool() (width, open int, frozen bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.width, len(f.conns), f.frozen
+func (r *remoteFile) Close() error {
+	err := r.File.Close()
+	if !r.closed {
+		r.closed = true
+		r.fs.release(r.c)
+	}
+	return err
 }
 
 func (f *remoteFS) Close() error {
+	// The connection slice stays intact: a transfer still holding one gets a
+	// closed-client error, which is the truth, rather than racing an empty pool.
 	f.mu.Lock()
+	f.closed = true
 	conns := f.conns
-	f.conns = nil
 	f.mu.Unlock()
+	f.free.Broadcast()
 
 	var firstErr error
 	for _, c := range conns {
@@ -171,7 +138,7 @@ func (f *remoteFS) Abs(p string) (string, error) {
 		return path.Clean(p), nil
 	}
 	f.homeOnce.Do(func() {
-		if wd, err := f.client().Getwd(); err == nil {
+		if wd, err := run(f, func(c *sftp.Client) (string, error) { return c.Getwd() }); err == nil {
 			f.home = wd
 		}
 	})
@@ -188,37 +155,67 @@ func (f *remoteFS) Rel(basepath, target string) (string, error) {
 
 func (f *remoteFS) Match(pattern, name string) (bool, error) { return path.Match(pattern, name) }
 
-func (f *remoteFS) Lstat(name string) (os.FileInfo, error)     { return f.client().Lstat(name) }
-func (f *remoteFS) Stat(name string) (os.FileInfo, error)      { return f.client().Stat(name) }
-func (f *remoteFS) ReadDir(name string) ([]os.FileInfo, error) { return f.client().ReadDir(name) }
-func (f *remoteFS) Readlink(name string) (string, error)       { return f.client().ReadLink(name) }
-func (f *remoteFS) Symlink(target, name string) error          { return f.client().Symlink(target, name) }
-func (f *remoteFS) Link(target, name string) error             { return f.client().Link(target, name) }
-func (f *remoteFS) Remove(name string) error                   { return f.client().Remove(name) }
-func (f *remoteFS) RemoveAll(name string) error                { return f.client().RemoveAll(name) }
-func (f *remoteFS) Chmod(name string, mode os.FileMode) error  { return f.client().Chmod(name, mode) }
-func (f *remoteFS) Chown(name string, uid, gid int) error      { return f.client().Chown(name, uid, gid) }
+func (f *remoteFS) Lstat(name string) (os.FileInfo, error) {
+	return run(f, func(c *sftp.Client) (os.FileInfo, error) { return c.Lstat(name) })
+}
+
+func (f *remoteFS) Stat(name string) (os.FileInfo, error) {
+	return run(f, func(c *sftp.Client) (os.FileInfo, error) { return c.Stat(name) })
+}
+
+func (f *remoteFS) ReadDir(name string) ([]os.FileInfo, error) {
+	return run(f, func(c *sftp.Client) ([]os.FileInfo, error) { return c.ReadDir(name) })
+}
+
+func (f *remoteFS) Readlink(name string) (string, error) {
+	return run(f, func(c *sftp.Client) (string, error) { return c.ReadLink(name) })
+}
+
+func (f *remoteFS) Symlink(target, name string) error {
+	return runErr(f, func(c *sftp.Client) error { return c.Symlink(target, name) })
+}
+
+func (f *remoteFS) Link(target, name string) error {
+	return runErr(f, func(c *sftp.Client) error { return c.Link(target, name) })
+}
+
+func (f *remoteFS) Remove(name string) error {
+	return runErr(f, func(c *sftp.Client) error { return c.Remove(name) })
+}
+
+func (f *remoteFS) RemoveAll(name string) error {
+	return runErr(f, func(c *sftp.Client) error { return c.RemoveAll(name) })
+}
+
+func (f *remoteFS) Chmod(name string, mode os.FileMode) error {
+	return runErr(f, func(c *sftp.Client) error { return c.Chmod(name, mode) })
+}
+
+func (f *remoteFS) Chown(name string, uid, gid int) error {
+	return runErr(f, func(c *sftp.Client) error { return c.Chown(name, uid, gid) })
+}
 
 func (f *remoteFS) Chtimes(name string, atime, mtime time.Time) error {
-	return f.client().Chtimes(name, atime, mtime)
+	return runErr(f, func(c *sftp.Client) error { return c.Chtimes(name, atime, mtime) })
 }
 
 // Mkdir lets the server apply its own umask (as a local mkdir does) unless an
 // explicit non-default mode is asked for; directory metadata is applied later by
 // the copy engine anyway.
 func (f *remoteFS) Mkdir(name string, perm os.FileMode) error {
-	c := f.client()
-	if err := c.Mkdir(name); err != nil {
-		return err
-	}
-	if perm.Perm() != 0o777 {
-		return c.Chmod(name, perm)
-	}
-	return nil
+	return runErr(f, func(c *sftp.Client) error {
+		if err := c.Mkdir(name); err != nil {
+			return err
+		}
+		if perm.Perm() != 0o777 {
+			return c.Chmod(name, perm)
+		}
+		return nil
+	})
 }
 
 func (f *remoteFS) MkdirAll(name string, perm os.FileMode) error {
-	return f.client().MkdirAll(name)
+	return runErr(f, func(c *sftp.Client) error { return c.MkdirAll(name) })
 }
 
 // Rename replaces an existing destination, which plain SSH_FXP_RENAME refuses.
@@ -226,25 +223,32 @@ func (f *remoteFS) MkdirAll(name string, perm os.FileMode) error {
 // fall back to unlink-then-rename (a hair less atomic, still crash-safe in the
 // sense that no partial file is ever published at the final path).
 func (f *remoteFS) Rename(from, to string) error {
-	c := f.client()
-	if _, ok := c.HasExtension("posix-rename@openssh.com"); ok {
-		return c.PosixRename(from, to)
-	}
-	if err := c.Rename(from, to); err == nil {
-		return nil
-	}
-	if err := c.Remove(to); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return c.Rename(from, to)
+	return runErr(f, func(c *sftp.Client) error {
+		if _, ok := c.HasExtension("posix-rename@openssh.com"); ok {
+			return c.PosixRename(from, to)
+		}
+		if err := c.Rename(from, to); err == nil {
+			return nil
+		}
+		if err := c.Remove(to); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return c.Rename(from, to)
+	})
 }
 
+// Open reserves a connection for this file and reads it there until it is
+// closed.
 func (f *remoteFS) Open(name string) (File, error) {
-	file, err := f.client().Open(name)
+	c := f.acquire()
+	c.begin()
+	file, err := c.client.Open(name)
+	c.finish()
 	if err != nil {
+		f.release(c)
 		return nil, err
 	}
-	return file, nil
+	return &remoteFile{File: file, fs: f, c: c}, nil
 }
 
 // CreateTemp mirrors os.CreateTemp: an exclusive create under dir with the "*"
@@ -254,26 +258,31 @@ func (f *remoteFS) CreateTemp(dir, pattern string) (File, error) {
 	if i := strings.LastIndex(pattern, "*"); i >= 0 {
 		prefix, suffix = pattern[:i], pattern[i+1:]
 	}
-	c := f.client()
+	c := f.acquire()
 	var buf [8]byte
 	for attempt := 0; attempt < 100; attempt++ {
 		if _, err := rand.Read(buf[:]); err != nil {
+			f.release(c)
 			return nil, err
 		}
 		name := path.Join(dir, prefix+hex.EncodeToString(buf[:])+suffix)
-		file, err := c.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL)
+		c.begin()
+		file, err := c.client.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL)
+		c.finish()
 		if err == nil {
-			return file, nil
+			return &remoteFile{File: file, fs: f, c: c}, nil
 		}
 		if !os.IsExist(err) {
+			f.release(c)
 			return nil, err
 		}
 	}
+	f.release(c)
 	return nil, fmt.Errorf("create temp file in %s: too many collisions", f.Display(dir))
 }
 
 func (f *remoteFS) Avail(dir string) (int64, bool) {
-	st, err := f.client().StatVFS(dir)
+	st, err := run(f, func(c *sftp.Client) (*sftp.StatVFS, error) { return c.StatVFS(dir) })
 	if err != nil {
 		return 0, false
 	}
