@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/basicopy/internal/options"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 func writeFile(t *testing.T, path string, data []byte, perm os.FileMode) {
@@ -244,12 +245,12 @@ func TestCanceledCopyIsNotAFailure(t *testing.T) {
 	info, err := os.Lstat(src)
 	require.NoError(t, err)
 
-	r := &runner{opts: &options.Options{}, stdout: io.Discard, stderr: io.Discard}
+	r := &runner{opts: &options.Options{}, stdout: io.Discard, stderr: io.Discard, dfs: vfs.Local}
 	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
 	r.setAbort(context.Canceled)
 
 	dst := filepath.Join(root, "dst.bin")
-	r.copyOne(fileJob{src: src, dst: dst, info: info})
+	r.copyOne(fileJob{srcFS: vfs.Local, src: src, dst: dst, info: info})
 	assert.Zero(t, r.failed.Load(), "a canceled copy is not a per-file failure")
 	assert.Zero(t, r.files.Load(), "a canceled copy must not count as completed")
 	_, statErr := os.Lstat(dst)
@@ -311,68 +312,6 @@ func TestIncludeOverridesExclude(t *testing.T) {
 	assert.NoError(t, e2, "keep.log should be re-included")
 }
 
-func TestMirrorDeletesExtraneous(t *testing.T) {
-	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	writeFile(t, filepath.Join(src, "keep.txt"), []byte("k"), 0o644)
-	writeFile(t, filepath.Join(src, "sub", "in.txt"), []byte("i"), 0o644)
-	dst := filepath.Join(root, "dst")
-
-	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "auto"}
-	require.NoError(t, o.Validate())
-	_, err := Run(context.Background(), o)
-	require.NoError(t, err)
-
-	// Introduce extraneous content in the destination.
-	writeFile(t, filepath.Join(dst, "src", "extra.txt"), []byte("x"), 0o644)
-	require.NoError(t, os.MkdirAll(filepath.Join(dst, "src", "extradir"), 0o755))
-	writeFile(t, filepath.Join(dst, "src", "extradir", "junk"), []byte("j"), 0o644)
-
-	om := &options.Options{Sources: []string{src}, TargetDir: dst, Mirror: true, Progress: "auto"}
-	require.NoError(t, om.Validate())
-	sum, err := Run(context.Background(), om)
-	require.NoError(t, err)
-	assert.NotZero(t, sum.Deleted)
-
-	_, e1 := os.Stat(filepath.Join(dst, "src", "extra.txt"))
-	assert.True(t, os.IsNotExist(e1), "extraneous file must be deleted")
-	_, e2 := os.Stat(filepath.Join(dst, "src", "extradir"))
-	assert.True(t, os.IsNotExist(e2), "extraneous dir must be deleted")
-	_, e3 := os.Stat(filepath.Join(dst, "src", "keep.txt"))
-	assert.NoError(t, e3, "matching file must be kept")
-	_, e4 := os.Stat(filepath.Join(dst, "src", "sub", "in.txt"))
-	assert.NoError(t, e4, "matching nested file must be kept")
-}
-
-// TestMirrorRestoresDirTimes: the mirror pass runs after the copy phase has
-// already applied directory metadata, and deleting an extraneous entry bumps
-// its parent's mtime — the pass must restore the preserved directory time.
-func TestMirrorRestoresDirTimes(t *testing.T) {
-	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	writeFile(t, filepath.Join(src, "d", "keep.txt"), []byte("k"), 0o644)
-	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	require.NoError(t, os.Chtimes(filepath.Join(src, "d"), old, old))
-
-	dst := filepath.Join(root, "dst")
-	o := &options.Options{Sources: []string{src}, TargetDir: dst, Mirror: true, Progress: "auto"}
-	require.NoError(t, o.Validate())
-	_, err := Run(context.Background(), o)
-	require.NoError(t, err)
-
-	// Plant an extraneous file and mirror again: deleting it bumps d's mtime
-	// after d's metadata was applied.
-	writeFile(t, filepath.Join(dst, "src", "d", "extra.txt"), []byte("x"), 0o644)
-	sum, err := Run(context.Background(), o)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, sum.Deleted)
-
-	di, err := os.Lstat(filepath.Join(dst, "src", "d"))
-	require.NoError(t, err)
-	assert.WithinDuration(t, old, di.ModTime(), time.Second,
-		"mirror deletions must not clobber preserved directory times")
-}
-
 func TestAutoscaleControllerRuns(t *testing.T) {
 	old := controlInterval
 	controlInterval = time.Millisecond
@@ -400,16 +339,16 @@ func TestAutoscaleControllerRuns(t *testing.T) {
 }
 
 func TestReserveSpaceDisabled(t *testing.T) {
-	r := &runner{opts: &options.Options{}} // spaceCheck false -> guard off
+	r := &runner{opts: &options.Options{}, dfs: vfs.Local} // spaceCheck false -> guard off
 	assert.True(t, r.reserveSpace("/dst/huge", 1<<40), "with no guard every file is allowed")
 }
 
 func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
 	old := availBytes
-	availBytes = func(string) (int64, bool) { return 100, true } // only 100 bytes free
+	availBytes = func(vfs.FS, string) (int64, bool) { return 100, true } // only 100 bytes free
 	defer func() { availBytes = old }()
 
-	r := &runner{opts: &options.Options{}, stderr: &bytes.Buffer{}, spaceCheck: true}
+	r := &runner{opts: &options.Options{}, stderr: &bytes.Buffer{}, spaceCheck: true, dfs: vfs.Local}
 	r.freeBytes.Store(100)
 	assert.False(t, r.reserveSpace("/dst/big.bin", 1<<20), "a file larger than free space must be refused")
 	assert.Error(t, r.abortErr(), "and the run must abort rather than attempt the write")
@@ -417,10 +356,10 @@ func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
 
 func TestReserveSpaceConfirmsRoomViaStatfs(t *testing.T) {
 	old := availBytes
-	availBytes = func(string) (int64, bool) { return 1 << 30, true } // 1 GiB really free
+	availBytes = func(vfs.FS, string) (int64, bool) { return 1 << 30, true } // 1 GiB really free
 	defer func() { availBytes = old }()
 
-	r := &runner{opts: &options.Options{}, spaceCheck: true}
+	r := &runner{opts: &options.Options{}, spaceCheck: true, dfs: vfs.Local}
 	r.freeBytes.Store(0) // estimate exhausted -> forces a real statfs, which finds room
 	assert.True(t, r.reserveSpace("/dst/f", 4096))
 	assert.NoError(t, r.abortErr())

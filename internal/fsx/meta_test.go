@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 // TestSyncAttrs covers the attribute-only touch-up primitive: exactly the
@@ -24,7 +25,7 @@ func TestSyncAttrs(t *testing.T) {
 	dst := filepath.Join(dir, "dst")
 	require.NoError(t, os.WriteFile(dst, []byte("d"), 0o600))
 
-	require.NoError(t, SyncAttrs(dst, info, true, true, true))
+	require.NoError(t, SyncAttrs(vfs.Local, info, vfs.Local, dst, true, true, true))
 	fi, err := os.Lstat(dst)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o644), fi.Mode().Perm())
@@ -32,7 +33,7 @@ func TestSyncAttrs(t *testing.T) {
 
 	// A selective sync leaves unrequested attributes alone.
 	require.NoError(t, os.Chmod(dst, 0o600))
-	require.NoError(t, SyncAttrs(dst, info, false, false, true))
+	require.NoError(t, SyncAttrs(vfs.Local, info, vfs.Local, dst, false, false, true))
 	fi, err = os.Lstat(dst)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "mode must not be touched when not requested")

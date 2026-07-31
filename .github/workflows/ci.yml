@@ -5,8 +5,11 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
   actions: read
+  checks: read
+  deployments: write
+  artifact-metadata: write
 
 jobs:
   test:

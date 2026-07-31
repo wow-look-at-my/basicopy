@@ -1,6 +1,6 @@
 # basicopy
 
-An auto-scaling, robocopy-grade local file copier.
+An auto-scaling, robocopy-grade file copier — local disks or over SSH.
 
 `rsync` is single-threaded, fragile, and version-sensitive. `robocopy` is robust
 and multithreaded but Windows-only and makes you *guess* a thread count
@@ -15,6 +15,14 @@ basicopy SRC...  --target-dir DIR      # copy each SRC under DIR as DIR/<basenam
 basicopy SRC     --target-file FILE     # copy a single SRC file to exactly FILE
 ```
 
+Either end may be a remote host, written the way `scp` writes it — no extra
+flags, no daemon, nothing to install on the far side:
+
+```
+basicopy ~/photos --target-dir myotherpc:/home/mhayine/backup
+basicopy myotherpc:/home/mhayine/whatever --target-dir ./local
+```
+
 ## Why it's different
 
 - **Self-tuning, no thread knob.** A closed-loop controller measures achieved
@@ -26,6 +34,15 @@ basicopy SRC     --target-file FILE     # copy a single SRC file to exactly FILE
   (heavy on-access antivirus/EDR) all look the same to the controller: adding
   workers stops raising throughput. It backs off on rising I/O latency, a pinned
   system CPU, or a saturated HDD, so the machine stays responsive.
+- **Remote copies are just copies.** `host:/path` on either side runs over SSH
+  (SFTP), and every feature comes along: incremental skip-unchanged re-runs,
+  `--checksum`, `--mirror`, `--dry-run` itemization, the space guard, crash-safe
+  publication. It shells out to your own `ssh`, so `~/.ssh/config`, agents,
+  `ProxyJump`, and host keys work exactly as they already do — and there is not
+  one SSH option to configure. Even the number of SSH connections is measured,
+  not set: the controller opens a second one only when the workers are all busy,
+  throughput has flattened, and another connection actually raises it. See
+  [docs/ssh.md](docs/ssh.md).
 - **Device-aware.** It classifies the source and destination as SSD or HDD
   (Linux: `/sys/.../queue/rotational`, `/proc/diskstats`) and seeds concurrency
   accordingly — conservative on spinning disks (which hate seek-thrash), generous
@@ -90,6 +107,14 @@ basicopy data --target-dir /mnt/archive --checksum
 # Machine-readable summary.
 basicopy data --target-dir /mnt/archive --json
 
+# Push a tree to another machine, then mirror it there (host aliases from
+# ~/.ssh/config work, as does user@host, [ipv6], and ssh://host:port/path).
+basicopy ~/project --target-dir myotherpc:/srv/project
+basicopy ~/project --target-dir myotherpc:/srv/project --mirror
+
+# Pull one back.
+basicopy myotherpc:/srv/project --target-dir ~/restore
+
 # Cap parallelism on a shared box; exclude build junk. A pattern ending in '/'
 # matches directories only ('node_modules/' never hits a file of that name).
 basicopy repo --target-dir /srv/repo --max-threads 8 --exclude '*.o' --exclude 'node_modules/'
@@ -123,6 +148,21 @@ drifted while the content is verifiably identical) is repaired in place instead
 of staying wrong forever, and counted as "updated" in the summary. Unchanged
 entries stay silent unless `--verbose` (`skip unchanged ...`).
 
+### Remote paths
+
+`[user@]host:/path` is remote, `[user@]host:path` is relative to the login
+directory, and `ssh://[user@]host[:port]/path` is the spelling that carries a
+port. A colon before the first `/` is what makes an argument remote (the scp
+rule); write `./weird:name` for a local path that contains one. Sources may name
+several hosts in one run, and remote-to-remote copies relay through this
+machine.
+
+What SFTP cannot carry is documented in [docs/ssh.md](docs/ssh.md): hardlinks in
+a *remote source* can't be detected (no inode identity), `--one-file-system`
+can't see remote mount points, xattrs/ACLs aren't copied when either end is
+remote, and mtimes are whole seconds. Content, mode, owner, times, symlinks, and
+hardlink creation on the destination all work.
+
 ### Path semantics (no games)
 
 The destination is always explicit — there is no positional `DST` and no
@@ -137,6 +177,8 @@ is announced on stderr.
 
 ## Platform support
 
+- **Any host you can `ssh` into:** the remote end needs only a working SFTP
+  subsystem — i.e. a stock `sshd`. Nothing is installed on the far side.
 - **Linux:** full depth — device classification + `%util` guard, reflink, sparse,
   `copy_file_range`, hardlink, ownership, xattr, and POSIX ACL preservation.
 - **macOS / other Unix:** portable buffered copy with metadata/ownership/hardlink
@@ -149,6 +191,8 @@ is announced on stderr.
 
 - Intra-file chunking (multiple parallel streams within one large file) for
   high-latency network targets.
+- Delta transfer (rsync's rolling-checksum block reuse): a changed file is sent
+  whole rather than by difference.
 - Native fast-copy primitives on macOS (`clonefile`) and Windows (`CopyFileEx`,
   ReFS block clone) and their device classification.
 - `O_DIRECT` (page-cache-bypassing) reads/writes — needs aligned-buffer handling
@@ -161,4 +205,5 @@ is announced on stderr.
 See `internal/` for the implementation: `engine` (orchestration + workers),
 `control` (the auto-scaling controller), `device`/`sysload` (signal sources),
 `fsx` (copy primitives), `scan` (reason-coded skip-unchanged compare),
-`walk`-style traversal lives in `engine`.
+`vfs` (local and SSH/SFTP filesystems); `walk`-style traversal lives in
+`engine`.

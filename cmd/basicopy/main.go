@@ -1,4 +1,5 @@
-// Command basicopy is an auto-scaling, robocopy-grade local file copier.
+// Command basicopy is an auto-scaling, robocopy-grade file copier for local
+// disks and remote hosts reached over SSH.
 package main
 
 import (
@@ -19,14 +20,20 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "basicopy [flags] SRC...",
-	Short: "Auto-scaling, robocopy-grade file copier",
+	Short: "Auto-scaling, robocopy-grade file copier, local or over SSH",
 	Long: `basicopy copies files and directory trees as fast as the hardware allows,
 auto-scaling its own parallelism to saturate the slowest link in the chain
 (disk, bus, or connection) without bogging the system down.
 
 The destination is always explicit:
   basicopy SRC...  --target-dir DIR     copy each SRC under DIR as DIR/<basename>
-  basicopy SRC     --target-file FILE   copy a single SRC file to exactly FILE`,
+  basicopy SRC     --target-file FILE   copy a single SRC file to exactly FILE
+
+Any SRC or destination may name a remote host, as scp does. Connections use
+your own ssh, so ~/.ssh/config, agents, and host keys apply unchanged:
+  basicopy ~/photos --target-dir myotherpc:/home/mhayine/backup
+  basicopy myotherpc:/srv/data --target-dir ./local
+  basicopy notes.txt --target-file ssh://me@host:2222/srv/notes.txt`,
 	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -50,8 +57,8 @@ func init() {
 	f := rootCmd.Flags()
 
 	// Destination.
-	f.StringVar(&opts.TargetDir, "target-dir", "", "copy each SRC under this directory as DIR/<basename>")
-	f.StringVar(&opts.TargetFile, "target-file", "", "copy a single SRC file to exactly this path")
+	f.StringVar(&opts.TargetDir, "target-dir", "", "copy each SRC under this directory as DIR/<basename> (may be [user@]host:/path)")
+	f.StringVar(&opts.TargetFile, "target-file", "", "copy a single SRC file to exactly this path (may be [user@]host:/path)")
 	f.BoolVar(&opts.Contents, "contents", false, "copy each source directory's contents into --target-dir itself instead of nesting under the source's basename (rsync SRC/ trailing-slash equivalent)")
 	f.BoolVar(&opts.NoAutoMkdirs, "no-auto-mkdirs", false, "error on missing target parents instead of creating them")
 
