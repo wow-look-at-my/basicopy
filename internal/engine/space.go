@@ -2,13 +2,16 @@ package engine
 
 import (
 	"fmt"
-	"path/filepath"
+
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 // availBytes reports the space available on the filesystem backing a path. It is
 // a package var (not a direct call) so tests can simulate a full destination
-// without needing a real size-limited filesystem.
-var availBytes = statfsAvail
+// without needing a real size-limited filesystem. A remote destination answers
+// through SFTP's statvfs extension; a server without it reports "unknown" and
+// the guard stays off.
+var availBytes = func(fsys vfs.FS, dir string) (int64, bool) { return fsys.Avail(dir) }
 
 // initSpaceGuard records the destination's currently-available space so copyOne
 // can refuse a file that would not fit, stopping the run *before* an ENOSPC write
@@ -18,7 +21,7 @@ func (r *runner) initSpaceGuard(dir string) {
 	if r.opts.DryRun || r.spaceCheck {
 		return // dry runs don't write; and seed only once across multiple sources
 	}
-	if avail, ok := availBytes(dir); ok {
+	if avail, ok := availBytes(r.dfs, dir); ok {
 		r.freeBytes.Store(avail)
 		r.spaceCheck = true
 	}
@@ -39,14 +42,14 @@ func (r *runner) reserveSpace(dstPath string, need int64) bool {
 		return true
 	}
 	// The estimate says we may be out of room; get the real figure before deciding.
-	avail, ok := availBytes(filepath.Dir(dstPath))
+	avail, ok := availBytes(r.dfs, r.dfs.Dir(dstPath))
 	if !ok {
 		return true // can't measure now; the ENOSPC abort is the backstop
 	}
 	r.freeBytes.Store(avail - need)
 	if avail < need {
 		r.elog("basicopy: destination is out of space: %s needs %s but only %s is free",
-			dstPath, fmtBytes(need), fmtBytes(avail))
+			r.dfs.Display(dstPath), fmtBytes(need), fmtBytes(avail))
 		r.setAbort(fmt.Errorf("destination is out of space"))
 		return false
 	}

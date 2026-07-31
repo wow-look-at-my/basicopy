@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/wow-look-at-my/basicopy/internal/scan"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 // hlPrimary records where a multiply-linked inode's first destination lives.
@@ -25,21 +26,25 @@ type linkEnt struct {
 // first copy after all copies finish. Single-link files are just copied. Dry
 // runs use the same hardlink bookkeeping so their itemization matches what a
 // real run would do (one copy plus links, not N independent copies).
-func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
+func (r *runner) handleRegular(root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
 	if !r.opts.NoHardlinks {
-		if key, nlink, ok := fileKey(fi); ok && nlink > 1 {
-			r.handleMultiLink(srcPath, dstPath, fi, parent, key)
+		key, nlink, ok := root.fs.FileID(fi)
+		if !ok {
+			r.noteNoFileIDs(root.fs)
+		}
+		if ok && nlink > 1 {
+			r.handleMultiLink(root, srcPath, dstPath, fi, parent, key)
 			return
 		}
 	}
 	if r.opts.DryRun {
 		// A dry run has no worker pool; decide skip-vs-copy right here.
-		v := scan.Compare(srcPath, fi, dstPath, r.opts.Checksum)
+		v := scan.Compare(root.fs, srcPath, fi, r.dfs, dstPath, r.opts.Checksum)
 		if !v.NeedCopy {
-			r.finishUnchangedFile(dstPath, fi, v)
+			r.finishUnchangedFile(root.fs, dstPath, fi, v)
 			return
 		}
-		r.enqueueFile(srcPath, dstPath, fi, parent, false, v.Reason)
+		r.enqueueFile(root, srcPath, dstPath, fi, parent, false, v.Reason)
 		return
 	}
 	// The skip-unchanged decision runs on the worker pool (checkUnchanged), not
@@ -47,7 +52,21 @@ func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *
 	// the single walk goroutine would serialize all hashing while the pool sat
 	// idle. Multi-link files (above) still decide on the walk goroutine because
 	// the answer feeds the walk-owned hardlink bookkeeping.
-	r.enqueueFile(srcPath, dstPath, fi, parent, true, "")
+	r.enqueueFile(root, srcPath, dstPath, fi, parent, true, "")
+}
+
+// noteNoFileIDs says once that hardlinked source files cannot be recognised as
+// such: SFTP carries no inode number or link count, so a remote source's linked
+// files are copied as independent files. It is a --verbose line rather than a
+// warning because the condition is a property of the protocol, not of this
+// tree -- it would otherwise print on every remote copy, including the vast
+// majority that contain no hardlinks at all.
+func (r *runner) noteNoFileIDs(fsys vfs.FS) {
+	if r.noFileIDsNoted || fsys.Local() {
+		return
+	}
+	r.noFileIDsNoted = true
+	r.verbose("%s: SSH exposes no inode identity; hardlinks in the source cannot be detected", fsys.Host())
 }
 
 // handleMultiLink handles one path to a multiply-linked source inode. The first
@@ -61,38 +80,40 @@ func (r *runner) handleRegular(srcPath, dstPath string, fi os.FileInfo, parent *
 // recorded primary, a secondary missing from the destination was recopied as an
 // independent duplicate, silently losing the hardlink structure and doubling
 // the stored data.
-func (r *runner) handleMultiLink(srcPath, dstPath string, fi os.FileInfo, parent *dirState, key string) {
+func (r *runner) handleMultiLink(root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState, key string) {
 	if p, seen := r.hardlinkMap[key]; seen {
-		if p.adopted && sameFile(p.dst, dstPath) {
+		if p.adopted && r.sameDestFile(p.dst, dstPath) {
 			r.skipped.Add(1)
-			r.verbose("skip unchanged %s", dstPath)
+			r.verbose("skip unchanged %s", r.dfs.Display(dstPath))
 			return
 		}
 		r.addDirWork(parent)
 		r.hardlinks = append(r.hardlinks, linkEnt{target: p.dst, dst: dstPath, parent: parent})
 		return
 	}
-	v := scan.Compare(srcPath, fi, dstPath, r.opts.Checksum)
+	v := scan.Compare(root.fs, srcPath, fi, r.dfs, dstPath, r.opts.Checksum)
 	if !v.NeedCopy {
 		r.hardlinkMap[key] = hlPrimary{dst: dstPath, adopted: true}
-		r.finishUnchangedFile(dstPath, fi, v)
+		r.finishUnchangedFile(root.fs, dstPath, fi, v)
 		return
 	}
 	r.hardlinkMap[key] = hlPrimary{dst: dstPath}
-	r.enqueueFile(srcPath, dstPath, fi, parent, false, v.Reason)
+	r.enqueueFile(root, srcPath, dstPath, fi, parent, false, v.Reason)
 }
 
-// sameFile reports whether two paths currently refer to the same inode.
-func sameFile(a, b string) bool {
-	fa, err := os.Lstat(a)
+// sameDestFile reports whether two destination paths currently refer to the same
+// file. A destination that cannot answer (SFTP has no inode identity) reports
+// false, so the link is recreated rather than wrongly assumed to exist.
+func (r *runner) sameDestFile(a, b string) bool {
+	fa, err := r.dfs.Lstat(a)
 	if err != nil {
 		return false
 	}
-	fb, err := os.Lstat(b)
+	fb, err := r.dfs.Lstat(b)
 	if err != nil {
 		return false
 	}
-	return os.SameFile(fa, fb)
+	return r.dfs.SameFile(fa, fb)
 }
 
 // applyHardlinks creates the recorded secondary hardlinks after all primary
@@ -101,17 +122,17 @@ func (r *runner) applyHardlinks() {
 	for _, l := range r.hardlinks {
 		if r.opts.DryRun {
 			r.linked.Add(1)
-			r.item("would hardlink %s => %s", l.dst, l.target)
+			r.item("would hardlink %s => %s", r.dfs.Display(l.dst), r.dfs.Display(l.target))
 			continue
 		}
-		_ = os.Remove(l.dst) // tolerate a leftover from a prior run
-		if err := os.Link(l.target, l.dst); err != nil {
-			r.fail(fmt.Errorf("hardlink %s -> %s: %w", l.dst, l.target, err))
+		_ = r.dfs.Remove(l.dst) // tolerate a leftover from a prior run
+		if err := r.dfs.Link(l.target, l.dst); err != nil {
+			r.fail(fmt.Errorf("hardlink %s -> %s: %w", r.dfs.Display(l.dst), r.dfs.Display(l.target), err))
 			r.completeDirWork(l.parent)
 			continue
 		}
 		r.linked.Add(1)
-		r.item("%s => %s (hardlink)", l.dst, l.target)
+		r.item("%s => %s (hardlink)", r.dfs.Display(l.dst), r.dfs.Display(l.target))
 		r.completeDirWork(l.parent)
 	}
 }

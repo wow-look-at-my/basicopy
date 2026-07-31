@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 func TestCopyFileRegular(t *testing.T) {
@@ -25,7 +26,7 @@ func TestCopyFileRegular(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := filepath.Join(dir, "dst.bin")
-	n, err := CopyFile(src, dst, info, CopyOptions{Preserve: true})
+	n, err := CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Preserve: true})
 	require.NoError(t, err)
 	assert.EqualValues(t, len(data), n)
 
@@ -53,7 +54,7 @@ func TestCopyFileEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := filepath.Join(dir, "empty.out")
-	n, err := CopyFile(src, dst, info, CopyOptions{Preserve: true})
+	n, err := CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Preserve: true})
 	require.NoError(t, err)
 	assert.Zero(t, n)
 	got, err := os.ReadFile(dst)
@@ -65,7 +66,7 @@ func TestCopyFileErrors(t *testing.T) {
 	dir := t.TempDir()
 
 	// Missing source -> open fails.
-	_, err := CopyFile(filepath.Join(dir, "nope"), filepath.Join(dir, "out"), nil, CopyOptions{})
+	_, err := CopyFile(vfs.Local, filepath.Join(dir, "nope"), vfs.Local, filepath.Join(dir, "out"), nil, CopyOptions{})
 	assert.Error(t, err)
 
 	// Destination directory does not exist -> temp creation fails.
@@ -73,7 +74,7 @@ func TestCopyFileErrors(t *testing.T) {
 	require.NoError(t, os.WriteFile(src, []byte("x"), 0o644))
 	info, err := os.Lstat(src)
 	require.NoError(t, err)
-	_, err = CopyFile(src, filepath.Join(dir, "missing-dir", "out"), info, CopyOptions{})
+	_, err = CopyFile(vfs.Local, src, vfs.Local, filepath.Join(dir, "missing-dir", "out"), info, CopyOptions{})
 	assert.Error(t, err)
 }
 
@@ -143,7 +144,7 @@ func TestCopyFileReportsProgress(t *testing.T) {
 
 	var total int64
 	dst := filepath.Join(dir, "dst.bin")
-	n, err := CopyFile(src, dst, info, CopyOptions{Progress: func(d int64) { total += d }})
+	n, err := CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Progress: func(d int64) { total += d }})
 	require.NoError(t, err)
 	assert.EqualValues(t, len(data), n)
 	assert.EqualValues(t, n, total, "progress callback must account for every copied byte")
@@ -170,7 +171,7 @@ func TestCopyFileFsync(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := filepath.Join(dir, "dst")
-	_, err = CopyFile(src, dst, info, CopyOptions{Preserve: true, Fsync: true})
+	_, err = CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Preserve: true, Fsync: true})
 	require.NoError(t, err)
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)
@@ -214,7 +215,7 @@ func TestCopyFileCanceledLeavesNothing(t *testing.T) {
 	require.NoError(t, err)
 
 	dst := filepath.Join(dir, "dst")
-	_, err = CopyFile(src, dst, info, CopyOptions{Cancel: func() bool { return true }})
+	_, err = CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Cancel: func() bool { return true }})
 	require.ErrorIs(t, err, ErrCanceled)
 
 	_, statErr := os.Lstat(dst)

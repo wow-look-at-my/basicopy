@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/basicopy/internal/options"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 func TestProgressLineShowsLiveTotalsAndETA(t *testing.T) {
@@ -75,14 +76,16 @@ func TestDiscoveryTotalsCountQueuedCopyWork(t *testing.T) {
 		opts:        &options.Options{DryRun: true, Progress: "auto"},
 		hardlinkMap: map[string]hlPrimary{},
 		stdout:      io.Discard, // dry runs itemize by default
+		dfs:         vfs.Local,
 	}
+	sroot := &srcRoot{fs: vfs.Local}
 	copyInfo, err := os.Stat(copyMe)
 	require.NoError(t, err)
 	skipInfo, err := os.Stat(skipMe)
 	require.NoError(t, err)
 
-	r.handleRegular(skipMe, filepath.Join(dst, "skip.txt"), skipInfo, nil)
-	r.handleRegular(copyMe, filepath.Join(dst, "copy.txt"), copyInfo, nil)
+	r.handleRegular(sroot, skipMe, filepath.Join(dst, "skip.txt"), skipInfo, nil)
+	r.handleRegular(sroot, copyMe, filepath.Join(dst, "copy.txt"), copyInfo, nil)
 
 	assert.EqualValues(t, 1, r.totalFiles.Load())
 	assert.EqualValues(t, len("copy"), r.totalBytes.Load())

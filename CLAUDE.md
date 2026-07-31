@@ -1,7 +1,32 @@
 # basicopy — developer notes
 
-An auto-scaling, robocopy-grade local file copier. See `README.md` for the user
-story and flags; this file is for working on the code.
+An auto-scaling, robocopy-grade file copier, local or over SSH. See `README.md`
+for the user story and flags; this file is for working on the code.
+
+## The rule that outranks everything else: no tuning knobs
+
+basicopy exists because `robocopy /MT:n` makes you *guess* a thread count and
+`rsync` makes you assemble a flag soup. **A tuning flag is a bug report against
+the controller.** If a setting could be measured, it MUST be measured — at
+runtime, on the live signal, with no user involvement.
+
+- **Not fully automatic is not an optimization.** A performance option the user
+  has to discover, understand, and set correctly is a waste of everyone's time:
+  almost nobody sets it, the people who do mostly set it wrong, and it exists
+  only because the automatic path was not written. Write the automatic path.
+- **"Add a flag for it" is never the answer** to "this is faster in some
+  situations". Find the signal that distinguishes those situations, feed it to
+  the controller, and let the loop decide (throughput plateau is usually it).
+- **The existing flags are not precedent.** `--max-threads` and `--buffer` are
+  *ceilings and escape hatches* for shared machines, not tuning dials, and the
+  list does not grow. Behavior flags (`--mirror`, `--checksum`, `--dry-run`) say
+  *what to do*, never *how fast to do it*.
+- **No environment variables, no config file, no `-o` passthrough** for
+  performance either — same rule, different spelling.
+- Applies to remote copies exactly as it does to local ones: the SSH connection
+  pool widens itself on the plateau signal (`docs/ssh.md`), and everything about
+  *how* to reach a host comes from the user's own `~/.ssh/config`, which they
+  already maintain for every other tool.
 
 ## Build & test
 
@@ -37,10 +62,18 @@ internal/
              needed (new/type change/size/mtime/content) or which attributes
              drifted (mode/owner/mtime) on an unchanged file; size+mtime by
              default, BLAKE3 with --checksum
+  vfs/       the filesystem seam: local (os pass-through) and remote (SFTP over
+             an ssh subprocess), scp-style path parsing, and the self-widening
+             SSH connection pool -- docs/ssh.md
 ```
 
 Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
 behind small functions; `control`, `engine`, and `options` are platform-agnostic.
+
+## Docs
+
+- `docs/ssh.md` -- remote copies: path syntax, why the ssh binary is the
+  transport, connection scaling, and what SFTP cannot carry.
 
 ## Key design points
 
@@ -62,6 +95,14 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
 - **Crash safety:** every file is written to a temp file in the destination
   directory and atomically renamed; an interrupted run never leaves a corrupt
   file at the final path.
+- **One code path, two kinds of filesystem.** Nothing outside `vfs` calls `os.*`
+  or `filepath.*` on a copy path: each side of a copy carries a `vfs.FS` (which
+  also supplies the path helpers, POSIX for remote). Adding a capability means
+  adding it once.
+- **Connections scale like workers.** A remote FS holds a connection pool that a
+  second `control.Controller` widens, gated on "workers saturated AND the worker
+  controller has plateaued" -- never a flag. Extra connections use
+  `BatchMode=yes` so they can never prompt mid-run. See `docs/ssh.md`.
 
 ## Testing notes
 
@@ -73,5 +114,10 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
   `runner` literals in tests need a non-nil `stdout` (e.g. `io.Discard`).
 - The env runs as root, so permission-denied paths can't be exercised; tests use
   other real failure modes (missing sources, dest collisions, ENOTDIR).
-- `fileKey`/`fileDev` (inode identity, device) are Unix-only; hardlink and
-  one-file-system tests live in `*_unix_test.go`.
+- `vfs.FS.FileID`/`Dev` (inode identity, device) answer only on local Unix;
+  hardlink and one-file-system tests live in `*_unix_test.go`.
+- Remote tests need no network, credentials, or `ssh` binary: they swap
+  `vfs.StartTransport` for an in-process `pkg/sftp` server over pipes (see
+  `internal/vfs/testserver_test.go`, `internal/engine/remote_test.go`), so the
+  real protocol code runs. The connection scaler is tested as pure logic in
+  `connscale_test.go`.

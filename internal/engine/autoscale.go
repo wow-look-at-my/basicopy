@@ -2,34 +2,32 @@ package engine
 
 import (
 	"context"
-	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/wow-look-at-my/basicopy/internal/control"
 	"github.com/wow-look-at-my/basicopy/internal/device"
 	"github.com/wow-look-at-my/basicopy/internal/sysload"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// controlInterval is the controller's tick period (var, not const, so tests can
-// shorten it).
-var controlInterval = 250 * time.Millisecond
+// Tick periods for the two control loops (vars, not consts, so tests can shorten
+// them). Connections are re-evaluated far less often than workers because
+// opening one costs a handshake and its effect takes a moment to show up in the
+// throughput signal.
+var (
+	controlInterval = 250 * time.Millisecond
+	connInterval    = 1 * time.Second
+)
 
 // runController is the auto-scaling loop. It seeds the worker limit from the
 // device class, then each tick measures achieved throughput plus the CPU and
-// device-util guard signals and lets the controller resize the gate.
+// device-util guard signals and lets the controller resize the gate. On a remote
+// copy it also drives the SSH connection pool from the same measurements (see
+// connScaler).
 func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
-	dstProbe := r.opts.TargetDir
-	if dstProbe == "" {
-		dstProbe = filepath.Dir(r.opts.TargetFile)
-	}
-	srcProbe := ""
-	if len(r.opts.Sources) > 0 {
-		srcProbe = r.opts.Sources[0]
-	}
-
-	dstInfo := device.Lookup(dstProbe)
-	srcInfo := device.Lookup(srcProbe)
+	dstInfo := r.probeDevice(r.localDestProbe())
+	srcInfo := r.probeDevice(r.localSourceProbe())
 	rotational := dstInfo.Rotational() || srcInfo.Rotational()
 
 	start := controllerStartW(rotational, r.gate.max)
@@ -42,9 +40,12 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 		srcUtil = device.NewUtilSampler(srcInfo.Name)
 	}
 	cpu := sysload.New()
+	conns := newConnScaler()
 
 	ticker := time.NewTicker(controlInterval)
 	defer ticker.Stop()
+	connTicker := time.NewTicker(connInterval)
+	defer connTicker.Stop()
 	prevBytes := r.moved.Load()
 	prevTime := time.Now()
 
@@ -54,6 +55,8 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 			return
 		case <-stop:
 			return
+		case now := <-connTicker.C:
+			conns.tick(r, c, r.reg.Remotes(), now)
 		case now := <-ticker.C:
 			nb := r.moved.Load()
 			dt := now.Sub(prevTime).Seconds()
@@ -73,6 +76,105 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 			}
 			s.DevUtil = sampleUtil(dstUtil, srcUtil)
 			r.gate.setLimit(c.Update(s))
+		}
+	}
+}
+
+// localDestProbe / localSourceProbe return a path to classify the backing device
+// for, or "" when that end is remote: the kernel knowledge behind device.Lookup
+// (rotational flag, %util) describes this machine's disks only, and guessing
+// with a remote path would classify whatever happens to be mounted here at the
+// same spelling.
+func (r *runner) localDestProbe() string {
+	if r.dfs == nil || !r.dfs.Local() {
+		return ""
+	}
+	if r.targetDir != "" {
+		return r.targetDir
+	}
+	return r.dfs.Dir(r.targetFile)
+}
+
+func (r *runner) localSourceProbe() string {
+	if len(r.opts.Sources) == 0 {
+		return ""
+	}
+	loc, err := vfs.Parse(r.opts.Sources[0])
+	if err != nil || loc.Remote {
+		return ""
+	}
+	return loc.Path
+}
+
+func (r *runner) probeDevice(path string) device.Info {
+	if path == "" {
+		return device.Info{}
+	}
+	return device.Lookup(path)
+}
+
+// connScaler sizes the SSH connection pool with the same closed loop that sizes
+// the worker pool, because the question is the same one: does adding another
+// stream raise throughput?
+//
+// A single ssh connection is a single TCP flow, encrypted by a single core, and
+// served by a single sftp-server process on the far end. Deep request pipelining
+// hides the link's latency within that connection, and for most copies that is
+// the whole story -- so the pool starts at one and stays there. When it is not
+// the whole story (cipher-bound on a fast LAN, a lossy long-haul link, a remote
+// disk that wants concurrent readers) the symptom is precise: the workers are
+// all busy, the worker controller has settled at a plateau, and throughput is
+// flat. That is exactly the condition under which this loop offers another
+// connection and keeps it only if the plateau rises.
+type connScaler struct {
+	ctl       *control.Controller
+	prevBytes int64
+	prevTime  time.Time
+	primed    bool
+	reported  int
+}
+
+func newConnScaler() *connScaler {
+	return &connScaler{ctl: control.New(1, vfs.MaxConnections, 1), reported: 1}
+}
+
+func (s *connScaler) tick(r *runner, workers *control.Controller, remotes []vfs.FS, now time.Time) {
+	if len(remotes) == 0 {
+		return
+	}
+	bytes := r.moved.Load()
+
+	// Two conditions have to hold before another connection could possibly be
+	// the answer: every worker slot is busy (with idle slots, the transport is
+	// not what's limiting the copy), and the worker controller has found its
+	// plateau (during its initial climb, every throughput change is its own
+	// doing). Until then, keep re-baselining so the first real sample measures
+	// a clean window.
+	if !r.gate.saturated() || !workers.Plateaued() {
+		s.prevBytes, s.prevTime, s.primed = bytes, now, true
+		return
+	}
+	if !s.primed {
+		s.prevBytes, s.prevTime, s.primed = bytes, now, true
+		return
+	}
+	dt := now.Sub(s.prevTime).Seconds()
+	db := bytes - s.prevBytes
+	s.prevBytes, s.prevTime = bytes, now
+	if dt <= 0 {
+		return
+	}
+
+	width := s.ctl.Update(control.Sample{Throughput: float64(db) / dt, SysCPU: -1, DevUtil: -1})
+	for _, fsys := range remotes {
+		sc, ok := fsys.(vfs.Scalable)
+		if !ok {
+			continue
+		}
+		sc.SetWidth(width)
+		if _, open, _ := sc.Pool(); open > s.reported {
+			s.reported = open
+			r.verbose("ssh: %s now using %d connections", fsys.Host(), open)
 		}
 	}
 }
