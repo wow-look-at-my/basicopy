@@ -17,7 +17,7 @@ import (
 // throughput signal.
 var (
 	controlInterval = 250 * time.Millisecond
-	connInterval    = 1 * time.Second
+	connInterval    = 500 * time.Millisecond
 )
 
 // runController is the auto-scaling loop. It seeds the worker limit from the
@@ -40,13 +40,14 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 		srcUtil = device.NewUtilSampler(srcInfo.Name)
 	}
 	cpu := sysload.New()
-	conns := newConnScaler()
+	conns := newConnReporter()
 
 	ticker := time.NewTicker(controlInterval)
 	defer ticker.Stop()
 	connTicker := time.NewTicker(connInterval)
 	defer connTicker.Stop()
 	prevBytes := r.moved.Load()
+	prevProgress := r.progressCount()
 	prevTime := time.Now()
 
 	for {
@@ -55,13 +56,15 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 			return
 		case <-stop:
 			return
-		case now := <-connTicker.C:
-			conns.tick(r, c, r.reg.Remotes(), now)
+		case <-connTicker.C:
+			conns.tick(r, r.reg.Remotes())
 		case now := <-ticker.C:
 			nb := r.moved.Load()
+			np := r.progressCount()
 			dt := now.Sub(prevTime).Seconds()
 			db := nb - prevBytes
-			prevBytes, prevTime = nb, now
+			stalled := np == prevProgress
+			prevBytes, prevProgress, prevTime = nb, np, now
 			if dt <= 0 {
 				continue
 			}
@@ -70,6 +73,12 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 				SysCPU:     -1,
 				DevUtil:    -1,
 				Rotational: rotational,
+				// Every worker occupied and not one byte, file, or directory
+				// finished: the copy is waiting on the storage. More streams is
+				// the only thing that overlaps that waiting, and the plateau
+				// logic would otherwise read the flat line as "W is already
+				// high enough".
+				Blocked: stalled && r.gate.saturated(),
 			}
 			if v, ok := cpu.Sample(); ok {
 				s.SysCPU = v
@@ -113,67 +122,31 @@ func (r *runner) probeDevice(path string) device.Info {
 	return device.Lookup(path)
 }
 
-// connScaler sizes the SSH connection pool with the same closed loop that sizes
-// the worker pool, because the question is the same one: does adding another
-// stream raise throughput?
-//
-// A single ssh connection is a single TCP flow, encrypted by a single core, and
-// served by a single sftp-server process on the far end. Deep request pipelining
-// hides the link's latency within that connection, and for most copies that is
-// the whole story -- so the pool starts at one and stays there. When it is not
-// the whole story (cipher-bound on a fast LAN, a lossy long-haul link, a remote
-// disk that wants concurrent readers) the symptom is precise: the workers are
-// all busy, the worker controller has settled at a plateau, and throughput is
-// flat. That is exactly the condition under which this loop offers another
-// connection and keeps it only if the plateau rises.
-type connScaler struct {
-	ctl       *control.Controller
-	prevBytes int64
-	prevTime  time.Time
-	primed    bool
-	reported  int
+// connReporter says, under --verbose, when a host's connection pool grew. There
+// is nothing here that decides the pool's size: connections follow the transfers
+// the copy has in flight (internal/vfs), and how many run at once is the worker
+// controller's measured decision. This only reports it.
+type connReporter struct{ reported map[string]int }
+
+// The first connection is not news: every remote copy has one.
+func newConnReporter() *connReporter { return &connReporter{reported: map[string]int{}} }
+
+func (c *connReporter) seen(host string) int {
+	if n, ok := c.reported[host]; ok {
+		return n
+	}
+	return 1
 }
 
-func newConnScaler() *connScaler {
-	return &connScaler{ctl: control.New(1, vfs.MaxConnections, 1), reported: 1}
-}
-
-func (s *connScaler) tick(r *runner, workers *control.Controller, remotes []vfs.FS, now time.Time) {
-	if len(remotes) == 0 {
-		return
-	}
-	bytes := r.moved.Load()
-
-	// Two conditions have to hold before another connection could possibly be
-	// the answer: every worker slot is busy (with idle slots, the transport is
-	// not what's limiting the copy), and the worker controller has found its
-	// plateau (during its initial climb, every throughput change is its own
-	// doing). Until then, keep re-baselining so the first real sample measures
-	// a clean window.
-	if !r.gate.saturated() || !workers.Plateaued() {
-		s.prevBytes, s.prevTime, s.primed = bytes, now, true
-		return
-	}
-	if !s.primed {
-		s.prevBytes, s.prevTime, s.primed = bytes, now, true
-		return
-	}
-	dt := now.Sub(s.prevTime).Seconds()
-	db := bytes - s.prevBytes
-	s.prevBytes, s.prevTime = bytes, now
-	if dt <= 0 {
-		return
-	}
-
-	width := s.ctl.Update(control.Sample{Throughput: float64(db) / dt, SysCPU: -1, DevUtil: -1})
+func (c *connReporter) tick(r *runner, remotes []vfs.FS) {
 	for _, fsys := range remotes {
-		sc, ok := fsys.(vfs.Scalable)
+		pooled, ok := fsys.(vfs.Pooled)
 		if !ok {
 			continue
 		}
-		sc.SetWidth(width)
-		if _, open, _ := sc.Pool(); open > s.reported {
-			s.reported = open
+		open, _ := pooled.Pool()
+		if open > c.seen(fsys.Host()) {
+			c.reported[fsys.Host()] = open
 			r.verbose("ssh: %s now using %d connections", fsys.Host(), open)
 		}
 	}

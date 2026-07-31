@@ -27,14 +27,18 @@ var StartTransport = startSSH
 // sshArgs builds the ssh command line: "ssh [-o BatchMode=yes] [-p port]
 // [-l user] -s host sftp".
 //
-// extra marks a connection opened to widen an existing pool. Those run with
-// BatchMode=yes so a host that needs an interactive credential can never stop a
-// running copy to ask for it a second time; the pool just stays as wide as it
-// already is.
+// extra marks a connection opened to widen an existing pool, which changes two
+// things. BatchMode=yes means a host that needs an interactive credential can
+// never stop a running copy to ask for it a second time -- the dial fails and
+// the pool stays the size it already is. ConnectTimeout bounds the dial, so a
+// host that has become unreachable mid-run fails the extra connection promptly
+// instead of leaving transfers waiting on a handshake that will never finish.
+// Neither applies to the first connection, which is the user's own ssh session
+// with the user's own settings.
 func sshArgs(loc Location, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
-		argv = append(argv, "-o", "BatchMode=yes")
+		argv = append(argv, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
 	}
 	if loc.Port != "" {
 		argv = append(argv, "-p", loc.Port)

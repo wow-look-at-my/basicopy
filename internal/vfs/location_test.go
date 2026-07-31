@@ -82,7 +82,7 @@ func TestSSHArgs(t *testing.T) {
 
 	// A connection opened to widen the pool must never be able to prompt.
 	assert.Equal(t,
-		[]string{"ssh", "-o", "BatchMode=yes", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
+		[]string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
 		sshArgs(loc, true))
 
 	plain, err := Parse("pc:/srv")

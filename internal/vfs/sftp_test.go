@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -191,93 +190,107 @@ func TestRemoteAvail(t *testing.T) {
 	assert.False(t, ok, "an unreadable path disables the guard rather than failing the run")
 }
 
-// TestConnectionPoolWidens covers the auto-scaled connection pool: growth is
-// asynchronous, tops out at MaxConnections, and narrowing only changes how many
-// connections carry work.
-func TestConnectionPoolWidens(t *testing.T) {
+// TestPoolGrowsWithConcurrentTransfers is the property the copy depends on: a
+// second transfer must not be made to queue behind the first on one connection,
+// because the far side would run them in sequence.
+func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	fsys := testFS(t)
-	pool, ok := fsys.(Scalable)
-	require.True(t, ok, "a remote FS must be scalable")
+	pooled, ok := fsys.(Pooled)
+	require.True(t, ok, "a remote FS must report its pool")
 
-	width, open, frozen := pool.Pool()
-	assert.Equal(t, 1, width)
-	assert.Equal(t, 1, open)
+	open, frozen := pooled.Pool()
+	assert.Equal(t, 1, open, "a copy starts on one connection")
 	assert.False(t, frozen)
 
-	pool.SetWidth(3)
-	require.Eventually(t, func() bool {
-		_, open, _ := pool.Pool()
-		return open == 2
-	}, 5*time.Second, 5*time.Millisecond, "one extra connection is dialed per request")
-
-	pool.SetWidth(1)
-	width, open, _ = pool.Pool()
-	assert.Equal(t, 1, width, "narrowing stops routing work to the extra connection")
-	assert.Equal(t, 2, open, "but does not close it mid-run")
-
-	pool.SetWidth(MaxConnections + 5)
-	require.Eventually(t, func() bool {
-		_, open, _ := pool.Pool()
-		return open == 3
-	}, 5*time.Second, 5*time.Millisecond)
-
-	// With more than one connection open, operations round-robin across them;
-	// they must all reach the same filesystem.
-	pool.SetWidth(2)
 	dir := t.TempDir()
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			f, err := fsys.CreateTemp(dir, "rr-*")
-			assert.NoError(t, err)
-			if err == nil {
-				assert.NoError(t, f.Close())
-			}
-		}(i)
-	}
-	wg.Wait()
-	entries, err := fsys.ReadDir(dir)
+	path := filepath.Join(dir, "f.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
+
+	// Hold one transfer open, then start another: the second must get its own
+	// connection rather than share.
+	first, err := fsys.Open(path)
 	require.NoError(t, err)
-	assert.Len(t, entries, 8)
+	rf := fsys.(*remoteFS)
+	rf.conns[0].inflight.Add(1) // pretend the far side has not answered yet
+
+	second, err := fsys.Open(path)
+	require.NoError(t, err)
+	open, _ = pooled.Pool()
+	assert.Equal(t, 2, open, "a concurrent transfer opens a connection")
+	assert.NotSame(t, second.(*remoteFile).c, first.(*remoteFile).c,
+		"and runs on it, not behind the first transfer")
+
+	rf.conns[0].inflight.Add(-1)
+	require.NoError(t, first.Close())
+	require.NoError(t, second.Close())
+
+	// With both transfers finished, the next one reuses a free connection.
+	third, err := fsys.Open(path)
+	require.NoError(t, err)
+	open, _ = pooled.Pool()
+	assert.Equal(t, 2, open, "an idle pool is reused, not grown")
+	require.NoError(t, third.Close())
 }
 
-// TestConnectionPoolFreezesOnDialFailure covers the case where the host cannot
-// give a second connection without asking for a credential: the pool must stop
-// trying rather than retry (and re-prompt) forever.
-func TestConnectionPoolFreezesOnDialFailure(t *testing.T) {
-	first, err := pipeTransport(Location{}, false)
-	require.NoError(t, err)
-	old := StartTransport
-	StartTransport = func(Location, bool) (*Transport, error) { return first, nil }
-	defer func() { StartTransport = old }()
+// TestPoolStopsAtMaxConnections: transfers share connections rather than wait
+// forever once the ceiling is reached.
+func TestPoolStopsAtMaxConnections(t *testing.T) {
+	fsys := testFS(t)
+	rf := fsys.(*remoteFS)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
 
-	loc, err := Parse("somehost:/")
-	require.NoError(t, err)
-	fsys, err := Dial(loc)
-	require.NoError(t, err)
-	defer fsys.Close()
-
-	dials := 0
-	StartTransport = func(Location, bool) (*Transport, error) {
-		dials++
-		return nil, errors.New("Permission denied (publickey)")
+	var files []File
+	for i := 0; i < MaxConnections+4; i++ {
+		f, err := fsys.Open(path)
+		require.NoError(t, err)
+		files = append(files, f)
+		// Every connection looks busy, so each new transfer wants a new one.
+		rf.mu.Lock()
+		for _, c := range rf.conns {
+			c.inflight.Store(1)
+		}
+		rf.mu.Unlock()
 	}
+	open, _ := fsys.(Pooled).Pool()
+	assert.Equal(t, MaxConnections, open, "the pool stops at the ceiling instead of dialing forever")
 
-	pool := fsys.(Scalable)
-	for i := 0; i < 5; i++ {
-		pool.SetWidth(4)
-		require.Eventually(t, func() bool {
-			_, _, frozen := pool.Pool()
-			return frozen
-		}, 5*time.Second, 5*time.Millisecond)
+	rf.mu.Lock()
+	for _, c := range rf.conns {
+		c.inflight.Store(0)
 	}
-	assert.Equal(t, 1, dials, "a failed widen is never retried")
+	rf.mu.Unlock()
+	for _, f := range files {
+		require.NoError(t, f.Close())
+	}
+}
 
-	width, open, _ := pool.Pool()
-	assert.Equal(t, 1, width)
-	assert.Equal(t, 1, open, "the run continues on the connection it already has")
+// TestFirstConnectionStaysClearForMetadata: once the pool has grown, directory
+// listings and stats must not queue behind a file that takes a minute to read,
+// or the walk stops feeding the workers.
+func TestFirstConnectionStaysClearForMetadata(t *testing.T) {
+	fsys := testFS(t)
+	rf := fsys.(*remoteFS)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
+
+	first, err := fsys.Open(path)
+	require.NoError(t, err)
+	rf.conns[0].inflight.Add(1)
+	second, err := fsys.Open(path)
+	require.NoError(t, err)
+	require.Len(t, rf.conns, 2)
+
+	// The transfer that arrived after the pool grew went to the new connection,
+	// and metadata keeps to the first one.
+	assert.Same(t, rf.conns[1], second.(*remoteFile).c)
+	rf.conns[0].inflight.Add(-1)
+	require.NoError(t, first.Close())
+	assert.Same(t, rf.conns[0], rf.pick(), "metadata prefers the connection carrying no transfer")
+
+	require.NoError(t, second.Close())
 }
 
 func TestUnsupportedRecognisesSFTPStatus(t *testing.T) {

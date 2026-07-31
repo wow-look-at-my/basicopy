@@ -30,6 +30,14 @@ type Sample struct {
 	SysCPU     float64 // system-wide CPU busy fraction [0,1]; <0 if unknown
 	DevUtil    float64 // device %util [0,100]; <0 if unknown
 	Rotational bool    // is a rotational (HDD) device involved?
+
+	// Blocked reports that every stream is occupied and yet nothing at all
+	// moved during this interval: the copy is waiting on the storage rather
+	// than using it. Cloud-backed files that must be downloaded on first read
+	// (OneDrive/Dropbox placeholders), tape, a spinning-up disk, or a remote
+	// server that answers one request at a time all look like this. See the
+	// Blocked handling in Update for why it inverts the usual conclusion.
+	Blocked bool
 }
 
 // Controller decides the worker limit W from a stream of Samples.
@@ -46,10 +54,6 @@ type Controller struct {
 	dwell   int // ticks to wait after a change for throughput to stabilize
 	hold    int // ticks spent holding since the last probe
 	probeUp bool
-
-	// plateaued latches once the initial climb has ended, i.e. W has found a
-	// level where growing stopped paying. See Plateaued.
-	plateaued bool
 
 	// Tunables (exported for testing/override).
 	Alpha    float64 // EWMA smoothing factor for throughput
@@ -89,16 +93,6 @@ func New(min, max, start int) *Controller {
 // W returns the current worker limit.
 func (c *Controller) W() int { return c.w }
 
-// Plateaued reports whether the controller has finished its initial climb and
-// found a plateau at least once. Until then W is still growing steeply, and
-// throughput changes say more about the last worker increase than about
-// anything else -- which is why a second controller sharing the same signal
-// (the SSH connection scaler) waits for this before drawing conclusions. It
-// stays true afterwards: the small probes the controller keeps making around a
-// plateau are absorbed by the other loop's own smoothing, and waiting for the
-// instant between probes would mean almost never sampling at all.
-func (c *Controller) Plateaued() bool { return c.plateaued }
-
 func (c *Controller) canGrow(s Sample) bool {
 	if s.SysCPU >= 0 && s.SysCPU > c.CPUCeil {
 		return false
@@ -122,13 +116,6 @@ func (c *Controller) grow() int {
 	return n
 }
 
-// setHolding enters the holding phase and records that a plateau has been
-// found at least once.
-func (c *Controller) setHolding() {
-	c.ph = holding
-	c.plateaued = true
-}
-
 // Update folds in one Sample and returns the (possibly changed) worker limit.
 func (c *Controller) Update(s Sample) int {
 	if !c.emaSet {
@@ -141,6 +128,29 @@ func (c *Controller) Update(s Sample) int {
 	// Wait for throughput to stabilize after the most recent change.
 	if c.dwell > 0 {
 		c.dwell--
+		return c.w
+	}
+
+	// A blocked interval is the one case where the plateau logic below reaches
+	// exactly the wrong answer. Its whole premise is "the last increase did not
+	// raise throughput, so W is high enough" -- but a stall produces zero
+	// throughput no matter what W is, so that test reads as a failed increase
+	// and W gets reverted, forever. (0 > 0*(1+Margin) is false.) That is how a
+	// copy of cloud-backed files ends up downloading them strictly one at a
+	// time.
+	//
+	// When nothing is moving and every stream is occupied, the measurement
+	// carries no evidence that W is too high -- and the only harm a stall can
+	// do is leave latency un-overlapped, which more streams fix. So grow, at
+	// the usual dwell-limited rate, and leave the plateau state untouched: once
+	// bytes flow again the normal loop resumes from here and trims back any
+	// excess.
+	if s.Blocked {
+		if c.canGrow(s) && c.w < c.max {
+			c.prevW = c.w
+			c.w = c.grow()
+			c.dwell = c.DwellN
+		}
 		return c.w
 	}
 
@@ -157,13 +167,13 @@ func (c *Controller) Update(s Sample) int {
 				c.w = c.grow()
 				c.dwell = c.DwellN
 			} else {
-				c.setHolding()
+				c.ph = holding
 				c.hold = 0
 			}
 		} else {
 			// The last increase didn't help: revert to the knee and hold.
 			c.w = c.prevW
-			c.setHolding()
+			c.ph = holding
 			c.hold = 0
 			c.dwell = c.DwellN
 		}
@@ -202,12 +212,12 @@ func (c *Controller) Update(s Sample) int {
 			// Removing a worker kept throughput within margin of the plateau
 			// peak: keep the lower W and keep looking for the minimum.
 			c.refT = c.ema
-			c.setHolding()
+			c.ph = holding
 			c.hold = 0
 		} else {
 			// It cost throughput: restore and hold.
 			c.w = c.prevW
-			c.setHolding()
+			c.ph = holding
 			c.hold = 0
 			c.dwell = c.DwellN
 		}

@@ -39,10 +39,12 @@ basicopy myotherpc:/home/mhayine/whatever --target-dir ./local
   `--checksum`, `--mirror`, `--dry-run` itemization, the space guard, crash-safe
   publication. It shells out to your own `ssh`, so `~/.ssh/config`, agents,
   `ProxyJump`, and host keys work exactly as they already do — and there is not
-  one SSH option to configure. Even the number of SSH connections is measured,
-  not set: the controller opens a second one only when the workers are all busy,
-  throughput has flattened, and another connection actually raises it. See
-  [docs/ssh.md](docs/ssh.md).
+  one SSH option to configure. Connections follow the work: an sftp-server
+  answers one request at a time, so basicopy gives each concurrently-transferred
+  file its own connection (dialed on demand, capped at 16) instead of queuing
+  them behind each other. That is what keeps files that are slow to *open* —
+  OneDrive/Dropbox placeholders downloaded on first read, cold storage — from
+  arriving strictly one at a time. See [docs/ssh.md](docs/ssh.md).
 - **Device-aware.** It classifies the source and destination as SSD or HDD
   (Linux: `/sys/.../queue/rotational`, `/proc/diskstats`) and seeds concurrency
   accordingly — conservative on spinning disks (which hate seek-thrash), generous
