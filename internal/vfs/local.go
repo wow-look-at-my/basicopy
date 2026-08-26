@@ -6,8 +6,7 @@ import (
 	"time"
 )
 
-// Local is the FS for this machine: a direct pass-through to the os package, so
-// a purely local run pays nothing for the abstraction beyond an interface call.
+// Local passes every call straight through to the os package.
 var Local FS = localFS{}
 
 type localFS struct{}
@@ -40,8 +39,7 @@ func (localFS) Mkdir(name string, perm os.FileMode) error    { return os.Mkdir(n
 func (localFS) MkdirAll(name string, perm os.FileMode) error { return os.MkdirAll(name, perm) }
 func (localFS) Chmod(name string, mode os.FileMode) error    { return os.Chmod(name, mode) }
 
-// Chown does not follow symlinks locally, so a recreated link gets its own
-// ownership rather than its target's.
+// Chown does not follow a symlink: a recreated link keeps its own owner, not the target's.
 func (localFS) Chown(name string, uid, gid int) error { return os.Lchown(name, uid, gid) }
 
 func (localFS) Chtimes(name string, atime, mtime time.Time) error {

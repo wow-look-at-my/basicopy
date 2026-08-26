@@ -16,16 +16,14 @@ type Location struct {
 	Path   string // the path on that host; "." means the remote login directory
 	Remote bool
 
-	// Prefix is the "user@host:" text to put in front of Path in output, kept
-	// as the user wrote it so messages echo their own spelling of the host.
+	// Prefix is the "user@host:" text for output, kept in the user's own spelling.
 	Prefix string
 }
 
 // String renders the location the way the user would have typed it.
 func (l Location) String() string { return l.Prefix + l.Path }
 
-// ConnKey identifies the connection a remote location needs, so two arguments
-// naming the same host share one ssh process.
+// ConnKey lets two arguments naming the same host share one ssh process.
 func (l Location) ConnKey() string { return l.User + "@" + l.Host + ":" + l.Port }
 
 const sshScheme = "ssh://"

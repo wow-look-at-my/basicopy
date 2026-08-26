@@ -61,8 +61,7 @@ func TestMirrorRestoresDirTimes(t *testing.T) {
 	_, err := Run(context.Background(), o)
 	require.NoError(t, err)
 
-	// Plant an extraneous file and mirror again: deleting it bumps d's mtime
-	// after d's metadata was applied.
+	// Plant an extraneous file and mirror again: the delete bumps d's mtime.
 	writeFile(t, filepath.Join(dst, "src", "d", "extra.txt"), []byte("x"), 0o644)
 	sum, err := Run(context.Background(), o)
 	require.NoError(t, err)

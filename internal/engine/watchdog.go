@@ -17,8 +17,8 @@ var (
 	stallTimeout  = 30 * time.Second
 )
 
-// stallDetector reports a stall when a monotonic progress figure stops advancing
-// for at least timeout. It is pure (clock is injected) so it can be unit-tested.
+// stallDetector reports a stall when progress stops advancing for at least
+// timeout. It is pure (clock is injected) so it can be unit-tested.
 type stallDetector struct {
 	timeout time.Duration
 	last    int64

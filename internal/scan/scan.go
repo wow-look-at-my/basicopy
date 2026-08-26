@@ -21,30 +21,20 @@ import (
 	"lukechampine.com/blake3"
 )
 
-// mtimeTolerance absorbs sub-second/granularity differences between filesystems
-// -- including SFTP, whose version-3 attributes carry whole seconds only.
+// mtimeTolerance absorbs cross-filesystem granularity; SFTP v3 stores whole seconds only.
 const mtimeTolerance = time.Second
 
 // Verdict is the reason-coded result of comparing a source file with its
 // destination path.
 type Verdict struct {
-	// NeedCopy reports that the destination must be (re)written; Reason then
-	// holds the printable cause: "new" (destination missing), "type change"
-	// (destination exists but is not a regular file), "size OLD -> NEW",
-	// "mtime differs" (default mode), or "content differs" (checksum mode).
+	// NeedCopy true means Reason names the cause: new, type change, size, mtime, or content differs.
 	NeedCopy bool
 	Reason   string
 
-	// DstInfo is the destination's Lstat result, returned so callers don't
-	// re-stat. It is nil when the destination is missing.
+	// DstInfo is the destination's Lstat result; nil when the destination is missing.
 	DstInfo fs.FileInfo
 
-	// Attribute drift on an up-to-date destination (only meaningful when
-	// !NeedCopy): permission bits, Unix owner uid:gid (false when either side
-	// cannot report ownership), and mtime. TimeDiff is reported only in
-	// checksum mode, where content equality is proven and the mtimes still
-	// disagree beyond the tolerance; in default mode "unchanged" already
-	// implies the mtimes matched.
+	// Meaningful only when !NeedCopy: ModeDiff/OwnerDiff/TimeDiff report drift on this current file.
 	ModeDiff  bool
 	OwnerDiff bool
 	TimeDiff  bool
@@ -126,11 +116,7 @@ func sameContent(srcFS vfs.FS, srcPath string, dstFS vfs.FS, dstPath string) boo
 	return hs == hd
 }
 
-// hashBufSize is the read chunk for content hashing. Reading in large chunks
-// matters twice over: it divides the read() syscall count (and, on a remote
-// file, keeps many SFTP requests in flight per read), and BLAKE3 hashes large
-// writes in-place where io.Copy's small internal buffer made the hasher allocate
-// per chunk (more garbage than the file itself).
+// hashBufSize is the read chunk for hashing; large reads cut syscalls and per-chunk hasher allocs.
 const hashBufSize = 1 << 20
 
 var bufPool = sync.Pool{New: func() any { b := make([]byte, hashBufSize); return &b }}

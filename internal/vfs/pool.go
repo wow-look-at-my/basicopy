@@ -10,11 +10,7 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// MaxConnections caps a host's connection pool. Each connection is an ssh
-// process on both ends, so the ceiling is not free -- but it has to be high
-// enough for the case that needs connections: an sftp-server answers one
-// request at a time, so concurrent transfers sharing a connection are run one
-// after another by the far side, however many of them the copy has in flight.
+// MaxConnections caps a host's pool; each connection is an ssh process, so the ceiling is not free.
 const MaxConnections = 16
 
 // conn is one ssh process carrying one SFTP session, plus the counters that say
@@ -23,10 +19,7 @@ type conn struct {
 	client *sftp.Client
 	close  func() error
 
-	// transfers is the number of open file handles this connection is copying
-	// through. It is what the pool sizes itself by: a second transfer on a
-	// connection already carrying one waits for the first, because the server
-	// works through its requests in order.
+	// transfers sizes the pool: a second transfer waits rather than share a busy connection.
 	transfers int64
 
 	inflight atomic.Int64 // requests issued and not yet answered
@@ -36,11 +29,7 @@ type conn struct {
 func (c *conn) begin()  { c.inflight.Add(1) }
 func (c *conn) finish() { c.inflight.Add(-1) }
 
-// pick chooses the connection for a one-off operation -- a stat, a readdir, a
-// rename. Once the pool has grown, the first connection is kept clear of file
-// transfers (see acquire) and is preferred here, so the walk's directory
-// listings never end up queued behind a file that takes a minute to read. With
-// a single connection there is no choice to make.
+// pick favors the free first connection, so directory listings never queue behind a slow transfer.
 func (f *remoteFS) pick() *conn {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -83,19 +72,9 @@ func runErr(f *remoteFS, op func(*sftp.Client) error) error {
 	return err
 }
 
-// acquire reserves a connection for one file transfer, and is where the pool
-// grows. A transfer takes a connection that is carrying none; if there is no
-// such connection, the pool dials one and this transfer waits for it -- or for
-// an earlier transfer to finish, whichever comes first.
-//
-// Waiting is the point. Once a file handle is opened on a connection it cannot
-// be moved, and the far side runs that connection's requests in order, so
-// putting a second transfer on a busy connection commits it to going second.
-// A copy that does this for its first burst of files ends up transferring them
-// one after another no matter how wide the pool grows afterwards.
-//
-// At MaxConnections, or when dialing has failed, transfers share connections
-// rather than wait forever.
+// acquire reserves a connection, growing the pool as needed. A handle cannot switch
+// connections, so it waits for a free one rather than queue behind a busy one. Past
+// MaxConnections, or once dialing fails, transfers share instead of waiting forever.
 func (f *remoteFS) acquire() *conn {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -148,9 +127,7 @@ func (f *remoteFS) startDialLocked() {
 		defer f.mu.Unlock()
 		f.dialing = false
 		if err != nil {
-			// The usual cause is a host that wants an interactive credential,
-			// which extra connections deliberately refuse to ask for. Stop
-			// trying and let the waiters share what is already open.
+			// Usually the host wants an interactive credential; give up and share what is open.
 			f.frozen = true
 		} else {
 			f.conns = append(f.conns, c)

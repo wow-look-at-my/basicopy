@@ -7,14 +7,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// metaUnsupported reports whether err means the destination filesystem simply
-// does not support a metadata operation -- e.g. chmod/chown/utimes on a FAT,
-// exFAT, or NTFS volume (a common external-backup target), or an SFTP server
-// that rejects an optional extension. Such a failure is not fatal: the file's
-// contents were copied and committed correctly, only the cosmetic metadata could
-// not be applied, so the copy must still count as a success rather than discard
-// good data. The standard library maps ENOSYS, ENOTSUP, and EOPNOTSUPP to
-// errors.ErrUnsupported, so the check is portable.
+// metaUnsupported reports whether err is a benign missing-metadata-support error.
 func metaUnsupported(err error) bool {
 	return vfs.Unsupported(err)
 }
@@ -70,11 +63,8 @@ func SyncAttrs(srcFS vfs.FS, info os.FileInfo, dstFS vfs.FS, dst string, mode, o
 	return nil
 }
 
-// preserveOwner sets dst's uid/gid to match the source entry. It is best-effort:
-// lacking privilege (EPERM) is the common case for unprivileged copies, a
-// destination filesystem without ownership (FAT/exFAT/NTFS) reports
-// "unsupported", and a source that carries no ownership at all (Windows) leaves
-// nothing to apply; none of those are treated as fatal.
+// preserveOwner sets dst's uid/gid to match src. EPERM (unprivileged copy),
+// unsupported (FAT/exFAT/NTFS), and no source ownership (Windows) are not fatal.
 func preserveOwner(srcFS vfs.FS, info os.FileInfo, dstFS vfs.FS, dst string) error {
 	uid, gid, ok := srcFS.Owner(info)
 	if !ok {
@@ -89,11 +79,8 @@ func preserveOwner(srcFS vfs.FS, info os.FileInfo, dstFS vfs.FS, dst string) err
 	return nil
 }
 
-// preserveTimes sets dst's modification time to match info. Sub-second precision
-// is limited by what the destination can store (SFTP version 3 carries
-// whole-second times, which is why the unchanged-file comparison tolerates a
-// one-second difference). A filesystem that cannot store timestamps is tolerated
-// (the copy is not failed over it).
+// preserveTimes sets dst's mtime to match info. SFTP v3 stores whole-second
+// times only, which is why unchanged-file comparison tolerates a 1s diff.
 func preserveTimes(dstFS vfs.FS, dst string, info os.FileInfo) error {
 	mt := info.ModTime()
 	if err := dstFS.Chtimes(dst, mt, mt); err != nil && !metaUnsupported(err) {
@@ -102,10 +89,8 @@ func preserveTimes(dstFS vfs.FS, dst string, info os.FileInfo) error {
 	return nil
 }
 
-// copyXattrsFS copies extended attributes, but only for a local-to-local copy:
-// SFTP has no portable xattr operations, so a copy with a remote end preserves
-// the ordinary metadata and leaves xattrs (and Linux ACLs, which ride on them)
-// behind.
+// copyXattrsFS copies xattrs only for local-to-local copies; SFTP has no
+// portable xattr operations, so a remote-end copy leaves xattrs (and ACLs) behind.
 func copyXattrsFS(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, nofollow bool) error {
 	if !srcFS.Local() || !dstFS.Local() {
 		return nil

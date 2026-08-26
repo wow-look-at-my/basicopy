@@ -8,9 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// curve models achievable throughput as a function of worker count: a saturating
-// hyperbola peak*w/(w+knee), optionally capped by a hard ceiling (a bus/link
-// limit that more workers cannot exceed).
+// curve models throughput as a function of worker count: a saturating hyperbola, capped at ceiling.
 type curve struct {
 	peak, knee, ceiling float64
 }
@@ -109,12 +107,7 @@ func TestLowKneeSettlesLowerThanHighKnee(t *testing.T) {
 	assert.Less(t, wlo, whi, "a workload that saturates sooner should settle at a lower W")
 }
 
-// TestBlockedSampleGrowsW pins the case the plateau logic gets backwards. When
-// every stream is stuck waiting on the storage -- a cloud-backed file being
-// downloaded on first read, cold storage, a server answering one request at a
-// time -- throughput is zero, and "the last increase did not raise throughput"
-// is true of every W there is. Reverting on that evidence pins the copy at one
-// stream forever, which is exactly how such a copy ends up serialized.
+// TestBlockedSampleGrowsW: zero throughput plus Blocked must grow W, not revert it.
 func TestBlockedSampleGrowsW(t *testing.T) {
 	c := New(1, 32, 1)
 	for i := 0; i < 40; i++ {
@@ -153,8 +146,7 @@ func TestBlockedThenFlowingTrimsBack(t *testing.T) {
 	}
 	require.Greater(t, c.W(), 1)
 
-	// A hard ceiling reached at a small W: with measurements available again,
-	// the ordinary loop must trim the streams the stall bought back down.
+	// A low ceiling: the resumed loop must trim the streams the stall bought.
 	ws := run(c, curve{peak: 1e9, knee: 4, ceiling: 0.4e9}, nil, 1200)
 	assert.LessOrEqual(t, tailAvg(ws, 80), 12.0, "the excess a stall bought is trimmed once throughput can be measured")
 	assert.GreaterOrEqual(t, tailAvg(ws, 80), 2.0, "but not below what the ceiling needs")

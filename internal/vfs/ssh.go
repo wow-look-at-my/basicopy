@@ -19,22 +19,13 @@ type Transport struct {
 	Close  func() error
 }
 
-// StartTransport opens that channel. It is a var so tests can run an in-process
-// SFTP server instead of a real ssh subprocess; nothing outside tests replaces
-// it, and it is not reachable from the command line.
+// StartTransport is a var so tests can swap in an in-process SFTP server.
 var StartTransport = startSSH
 
-// sshArgs builds the ssh command line: "ssh [-o BatchMode=yes] [-p port]
-// [-l user] -s host sftp".
-//
-// extra marks a connection opened to widen an existing pool, which changes two
-// things. BatchMode=yes means a host that needs an interactive credential can
-// never stop a running copy to ask for it a second time -- the dial fails and
-// the pool stays the size it already is. ConnectTimeout bounds the dial, so a
-// host that has become unreachable mid-run fails the extra connection promptly
-// instead of leaving transfers waiting on a handshake that will never finish.
-// Neither applies to the first connection, which is the user's own ssh session
-// with the user's own settings.
+// sshArgs builds the ssh command line. extra marks a pool-widening connection:
+// BatchMode=yes stops it from prompting for a credential (the dial just fails
+// instead), and ConnectTimeout bounds it against an unreachable host. The first
+// connection is the user's own interactive ssh session and gets neither.
 func sshArgs(loc Location, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
@@ -84,9 +75,8 @@ func startSSH(loc Location, extra bool) (*Transport, error) {
 	}}, nil
 }
 
-// clientOptions tune the SFTP client for bulk copying: many requests in flight
-// per file so a transfer is not limited by the link's round-trip time, which is
-// what makes a distant host slow long before its bandwidth does.
+// clientOptions keep many requests per file in flight, so round-trip time (not
+// bandwidth) is what limits a transfer to a distant host.
 var clientOptions = []sftp.ClientOption{
 	sftp.MaxPacket(32 << 10),
 	sftp.MaxConcurrentRequestsPerFile(64),

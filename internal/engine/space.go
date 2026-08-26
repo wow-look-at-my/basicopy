@@ -6,17 +6,11 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// availBytes reports the space available on the filesystem backing a path. It is
-// a package var (not a direct call) so tests can simulate a full destination
-// without needing a real size-limited filesystem. A remote destination answers
-// through SFTP's statvfs extension; a server without it reports "unknown" and
-// the guard stays off.
+// availBytes reports free space; a package var lets tests simulate a full destination.
 var availBytes = func(fsys vfs.FS, dir string) (int64, bool) { return fsys.Avail(dir) }
 
-// initSpaceGuard records the destination's currently-available space so copyOne
-// can refuse a file that would not fit, stopping the run *before* an ENOSPC write
-// instead of after one. It is a no-op (guard disabled) for a dry run or when the
-// figure cannot be read (e.g. off Unix, or a filesystem statfs rejects).
+// initSpaceGuard records the destination's free space, so a later write can be
+// refused before an ENOSPC failure instead of after one.
 func (r *runner) initSpaceGuard(dir string) {
 	if r.opts.DryRun || r.spaceCheck {
 		return // dry runs don't write; and seed only once across multiple sources

@@ -30,8 +30,7 @@ func TestSamplerOnRealSystem(t *testing.T) {
 	_, ok := s.Sample()
 	assert.False(t, ok, "first sample primes the baseline")
 
-	// Let enough wall time pass that the jiffy counters advance (total > 0),
-	// while burning a little CPU so there is measurable busy time.
+	// Burn CPU so jiffy counters advance and busy time is measurable.
 	deadline := time.Now().Add(60 * time.Millisecond)
 	x := 0
 	for time.Now().Before(deadline) {

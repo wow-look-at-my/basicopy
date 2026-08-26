@@ -16,9 +16,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
 
-// newCmd returns a command with a context and output sink, mirroring how cobra
-// sets a context during ExecuteContext (a bare command's Context() is nil, which
-// engine.Run would dereference).
+// newCmd sets a context, since a bare command's Context() is nil and engine.Run dereferences it.
 func newCmd(out io.Writer) *cobra.Command {
 	c := &cobra.Command{}
 	c.SetContext(context.Background())
@@ -79,8 +77,7 @@ func TestRunJSONSummary(t *testing.T) {
 	require.NoError(t, run(cmd, o))
 	assert.Contains(t, out.String(), `"files": 1`)
 
-	// The whole stdout payload must be one JSON document -- nothing before or
-	// after it (machine consumers parse the stream as-is).
+	// stdout must carry only the JSON document, nothing else.
 	var sum engine.Summary
 	require.NoError(t, json.Unmarshal(out.Bytes(), &sum), "stdout must be pure JSON, got: %q", out.String())
 	assert.EqualValues(t, 1, sum.Files)

@@ -75,19 +75,12 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	if err := r.resolveTarget(); err != nil {
 		return r.summary(), err
 	}
-	// Stream per-chunk byte progress into a live counter so the watchdog, progress
-	// line, and autoscaler see a large file advancing mid-copy — not a flat line
-	// until it finishes. Summary bytes stay sourced from completed copies (so a
-	// retried file isn't double-counted); moved is monotonic and for liveness only.
+	// moved advances mid-copy, so live progress isn't flat until a large file finishes.
 	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
-	// Stop in-flight copies at their next chunk boundary once the run is
-	// aborting (Ctrl-C, watchdog, --fatal-errors, out of space) — without this a
-	// cancelled run would still finish every in-flight file, which for large
-	// files can take minutes.
+	// Stops in-flight copies at the next chunk boundary once the run aborts.
 	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
 
-	// Cancel the run if the context is cancelled (Ctrl-C); crash-safe temp files
-	// are cleaned up by fsx.CopyFile's deferred removal.
+	// Ctx cancellation (Ctrl-C) aborts the run; fsx.CopyFile cleans up its own temp file.
 	stopWatch := make(chan struct{})
 	go func() {
 		select {
@@ -145,15 +138,10 @@ type fileJob struct {
 	info     os.FileInfo
 	parent   *dirState
 
-	// checkUnchanged defers the skip-unchanged decision to the worker: the
-	// walk goroutine enqueues without stat/hashing the destination so that,
-	// with --checksum, content hashing runs across the pool instead of
-	// serializing on the walk.
+	// checkUnchanged defers the skip check to the pool, so --checksum hashing runs in parallel.
 	checkUnchanged bool
 
-	// reason is the itemizable cause of the copy when the walk already
-	// compared the destination (checkUnchanged false); the worker fills it in
-	// otherwise.
+	// reason is set by the walk when checkUnchanged is false; otherwise the worker fills it in.
 	reason string
 }
 
@@ -161,10 +149,7 @@ type runner struct {
 	opts     *options.Options
 	copyOpts fsx.CopyOptions
 
-	// reg owns the connections to any remote hosts involved; dfs is the
-	// destination filesystem (local or one remote host) and targetDir /
-	// targetFile are the destination paths as they exist on dfs, with any
-	// "host:" prefix stripped off.
+	// reg owns remote connections; dfs/targetDir/targetFile are the destination path, "host:" prefix stripped.
 	reg        *vfs.Registry
 	dfs        vfs.FS
 	targetDir  string
@@ -187,20 +172,13 @@ type runner struct {
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
 	dirMetaTotal, dirMetaDone                                               atomic.Int64
 
-	// moved is a monotonic count of bytes written across all in-flight and
-	// completed copies (updated mid-copy via copyOpts.Progress). It is the
-	// liveness/throughput signal for the watchdog, progress line, and autoscaler;
-	// bytes (above) remains the authoritative completed-byte total for the summary.
+	// moved is a monotonic live-progress counter, distinct from bytes (the completed-copy total used for the summary).
 	moved atomic.Int64
 
-	// totalFiles/totalBytes grow as the walk discovers copy work, allowing the
-	// status line to show live total progress and ETA without blocking copying.
+	// totalFiles/totalBytes grow as the walk discovers work, giving live progress and ETA without blocking copying.
 	totalFiles, totalBytes atomic.Int64
 
-	// Pre-write space guard: freeBytes tracks the destination's remaining space
-	// (seeded by initSpaceGuard via statfs, then decremented per file) so copyOne
-	// can refuse a file that would not fit and stop the run before an ENOSPC write.
-	// spaceCheck is false when the figure can't be read (the guard is then off).
+	// freeBytes guards against ENOSPC; spaceCheck false means the guard is off.
 	freeBytes  atomic.Int64
 	spaceCheck bool
 
@@ -217,10 +195,7 @@ type runner struct {
 	rootDevSet     bool
 }
 
-// mirrorRoot pairs a walked source root with its destination. The --mirror pass
-// deletes only under roots recorded here, so a source that failed its safety
-// guards (or didn't exist) can never have its destination -- or, in contents
-// mode, itself -- swept as "extraneous".
+// mirrorRoot pairs a source root with its destination; --mirror deletes only under recorded roots.
 type mirrorRoot struct {
 	srcFS     vfs.FS
 	dest, src string
@@ -261,9 +236,7 @@ func workerCount(opts *options.Options) (max, initial int) {
 			max = 256
 		}
 	}
-	// A neutral starting limit for the brief window before the controller's first
-	// tick (and for copies too short for it to engage); the controller resizes
-	// from here based on device class and measured throughput.
+	// Neutral start before the controller's first tick; it resizes from here.
 	initial = 2 * runtime.NumCPU()
 	if initial < 4 {
 		initial = 4
@@ -309,8 +282,7 @@ func (r *runner) copyOne(job fileJob) {
 	if job.checkUnchanged {
 		v := scan.Compare(job.srcFS, job.src, job.info, r.dfs, job.dst, r.opts.Checksum)
 		if !v.NeedCopy {
-			// Undo the discovery accounting: these bytes will never move, so
-			// the live progress denominator and ETA must not keep counting them.
+			// These bytes will never move: undo the discovery accounting.
 			r.totalFiles.Add(-1)
 			r.totalBytes.Add(-job.info.Size())
 			r.finishUnchangedFile(job.srcFS, job.dst, job.info, v)
@@ -409,9 +381,7 @@ func (r *runner) fail(err error) {
 	r.elog("basicopy: error: %v", err)
 	switch {
 	case isNoSpace(err):
-		// The destination is full: every remaining file would fail the same way,
-		// so stop the whole run now instead of grinding through the rest of the
-		// tree and reporting thousands of identical ENOSPC failures.
+		// Every remaining file would hit ENOSPC too; abort now, don't grind through the tree.
 		r.setAbort(fmt.Errorf("destination is out of space: %w", err))
 	case r.opts.FatalErrors:
 		r.setAbort(err)
@@ -459,8 +429,7 @@ func (r *runner) note(format string, a ...any) {
 }
 
 // verbose prints a low-interest per-entry line ("skip unchanged", "exclude")
-// that only appears under --verbose, in dry and real runs alike. --json owns
-// stdout for the machine-readable summary, so it suppresses these too.
+// under --verbose only; --json suppresses it too.
 func (r *runner) verbose(format string, a ...any) {
 	if !r.opts.Verbose || r.opts.JSON {
 		return
@@ -468,11 +437,8 @@ func (r *runner) verbose(format string, a ...any) {
 	r.printLine(r.stdout, format, a...)
 }
 
-// item prints one per-entry action line (copy, update, mkdir, link, hardlink,
-// delete). In a dry run these lines ARE the product, so they print by default;
-// --quiet suppresses them, as does --json, which owns stdout for the
-// machine-readable summary (human lines would corrupt the stream). In a real
-// run they print under --verbose only.
+// item prints a per-entry action line. In a dry run it IS the output and
+// prints by default; a real run needs --verbose. --quiet/--json suppress it.
 func (r *runner) item(format string, a ...any) {
 	if r.opts.Quiet || r.opts.JSON || (!r.opts.DryRun && !r.opts.Verbose) {
 		return

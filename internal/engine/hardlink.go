@@ -8,9 +8,8 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// hlPrimary records where a multiply-linked inode's first destination lives.
-// adopted means an existing, unchanged destination file was kept as the link
-// target rather than recopied this run.
+// hlPrimary records a multiply-linked inode's first destination; adopted means
+// an unchanged file was kept as-is, not recopied.
 type hlPrimary struct {
 	dst     string
 	adopted bool
@@ -47,20 +46,12 @@ func (r *runner) handleRegular(root *srcRoot, srcPath, dstPath string, fi os.Fil
 		r.enqueueFile(root, srcPath, dstPath, fi, parent, false, v.Reason)
 		return
 	}
-	// The skip-unchanged decision runs on the worker pool (checkUnchanged), not
-	// here: with --checksum it means two full content reads, and doing that on
-	// the single walk goroutine would serialize all hashing while the pool sat
-	// idle. Multi-link files (above) still decide on the walk goroutine because
-	// the answer feeds the walk-owned hardlink bookkeeping.
+	// Runs on the pool, not the walk goroutine: --checksum needs two full reads.
 	r.enqueueFile(root, srcPath, dstPath, fi, parent, true, "")
 }
 
-// noteNoFileIDs says once that hardlinked source files cannot be recognised as
-// such: SFTP carries no inode number or link count, so a remote source's linked
-// files are copied as independent files. It is a --verbose line rather than a
-// warning because the condition is a property of the protocol, not of this
-// tree -- it would otherwise print on every remote copy, including the vast
-// majority that contain no hardlinks at all.
+// noteNoFileIDs prints once, under --verbose: SFTP has no inode or link count,
+// so a remote source's hardlinks copy as independent files.
 func (r *runner) noteNoFileIDs(fsys vfs.FS) {
 	if r.noFileIDsNoted || fsys.Local() {
 		return
@@ -101,9 +92,8 @@ func (r *runner) handleMultiLink(root *srcRoot, srcPath, dstPath string, fi os.F
 	r.enqueueFile(root, srcPath, dstPath, fi, parent, false, v.Reason)
 }
 
-// sameDestFile reports whether two destination paths currently refer to the same
-// file. A destination that cannot answer (SFTP has no inode identity) reports
-// false, so the link is recreated rather than wrongly assumed to exist.
+// sameDestFile reports whether a and b are the same file. An SFTP destination
+// (no inode identity) reports false, so the link is recreated, not assumed.
 func (r *runner) sameDestFile(a, b string) bool {
 	fa, err := r.dfs.Lstat(a)
 	if err != nil {

@@ -11,10 +11,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// Tick periods for the two control loops (vars, not consts, so tests can shorten
-// them). Connections are re-evaluated far less often than workers because
-// opening one costs a handshake and its effect takes a moment to show up in the
-// throughput signal.
+// Vars, not consts, so tests can shorten them. Connections resize less often.
 var (
 	controlInterval = 250 * time.Millisecond
 	connInterval    = 500 * time.Millisecond
@@ -73,11 +70,7 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 				SysCPU:     -1,
 				DevUtil:    -1,
 				Rotational: rotational,
-				// Every worker occupied and not one byte, file, or directory
-				// finished: the copy is waiting on the storage. More streams is
-				// the only thing that overlaps that waiting, and the plateau
-				// logic would otherwise read the flat line as "W is already
-				// high enough".
+				// All workers busy, nothing finished: I/O is stalled; grow W, don't hold it.
 				Blocked: stalled && r.gate.saturated(),
 			}
 			if v, ok := cpu.Sample(); ok {
@@ -89,11 +82,7 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 	}
 }
 
-// localDestProbe / localSourceProbe return a path to classify the backing device
-// for, or "" when that end is remote: the kernel knowledge behind device.Lookup
-// (rotational flag, %util) describes this machine's disks only, and guessing
-// with a remote path would classify whatever happens to be mounted here at the
-// same spelling.
+// Returns "" when that end is remote: device.Lookup only classifies local disks.
 func (r *runner) localDestProbe() string {
 	if r.dfs == nil || !r.dfs.Local() {
 		return ""
@@ -122,10 +111,7 @@ func (r *runner) probeDevice(path string) device.Info {
 	return device.Lookup(path)
 }
 
-// connReporter says, under --verbose, when a host's connection pool grew. There
-// is nothing here that decides the pool's size: connections follow the transfers
-// the copy has in flight (internal/vfs), and how many run at once is the worker
-// controller's measured decision. This only reports it.
+// connReporter says, under --verbose, when a host's pool grew; W decides the size.
 type connReporter struct{ reported map[string]int }
 
 // The first connection is not news: every remote copy has one.
@@ -169,9 +155,8 @@ func sampleUtil(dst, src *device.UtilSampler) float64 {
 	return util
 }
 
-// controllerStartW seeds the worker limit from the device prior: conservative on
-// rotational media (avoid seek-thrashing during the probe), generous on
-// SSD/unknown where concurrency is needed to fill queue depth.
+// controllerStartW seeds W from the device type: conservative on rotational
+// (avoid seek thrashing), generous on SSD/unknown to fill queue depth.
 func controllerStartW(rotational bool, max int) int {
 	if rotational {
 		if max < 2 {
