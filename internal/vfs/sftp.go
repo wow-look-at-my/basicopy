@@ -14,24 +14,12 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// remoteFS is a host reached over SFTP. Paths are POSIX; capabilities the
-// protocol does not carry (inode identity, st_dev, xattrs) report unavailable so
-// the engine degrades instead of failing.
+// remoteFS is a host reached over SFTP. Paths are POSIX; capabilities the protocol
+// lacks (inode identity, st_dev, xattrs) report unavailable.
 //
-// The pool: a copy gets one connection per file it is transferring
-// concurrently, up to MaxConnections, dialed on demand and kept for the run.
-// That is not an optimization, it is what "parallel" means here -- an SFTP
-// server handles one request at a time, so N transfers down one connection are
-// N transfers in a queue. It is the same reason a hand-written loop of parallel
-// scp commands beats a single sftp session on files that are slow to read
-// (cloud-backed placeholders being downloaded on first access, cold storage, a
-// disk spinning up): each scp brings its own server.
-//
-// How many transfers run at once is decided elsewhere, by the worker
-// controller, on measured throughput -- so the pool inherits that restraint
-// rather than needing its own. A copy that gains nothing from parallelism keeps
-// a small W and therefore a small pool; a single-file copy uses exactly one
-// connection.
+// Each concurrent transfer gets its own connection, up to MaxConnections: a
+// server answers one request at a time, so transfers sharing a connection queue
+// instead of running in parallel. Pool width tracks the worker controller's W.
 type remoteFS struct {
 	host   string // "[user@]host" for messages
 	prefix string // "[user@]host:" path prefix for output
@@ -74,10 +62,8 @@ func (f *remoteFS) Dir(p string) string        { return path.Dir(p) }
 func (f *remoteFS) Base(p string) string       { return path.Base(p) }
 func (f *remoteFS) IsAbs(p string) bool        { return path.IsAbs(p) }
 
-// remoteFile is an open remote file bound to the connection it was opened on --
-// an SFTP handle is only valid there. It reports its own traffic so a handle
-// parked in a slow read shows up as a busy connection, and releases the
-// connection's transfer slot when it closes.
+// remoteFile is bound to the connection it opened on; a slow read shows as busy,
+// and close frees the connection's transfer slot.
 type remoteFile struct {
 	*sftp.File
 	fs     *remoteFS
@@ -109,8 +95,7 @@ func (r *remoteFile) Close() error {
 }
 
 func (f *remoteFS) Close() error {
-	// The connection slice stays intact: a transfer still holding one gets a
-	// closed-client error, which is the truth, rather than racing an empty pool.
+	// Keep conns intact: a held transfer gets a truthful closed-client error, not a race.
 	f.mu.Lock()
 	f.closed = true
 	conns := f.conns
@@ -301,12 +286,10 @@ func (f *remoteFS) Owner(fi os.FileInfo) (uid, gid int, ok bool) {
 	return int(st.UID), int(st.GID), true
 }
 
-// FileID reports no identity: SFTP carries no inode number or link count, so
-// hardlinked sources on a remote host are copied as independent files.
+// FileID reports no identity: SFTP has no inode number, so remote hardlinks copy as independent files.
 func (f *remoteFS) FileID(fi os.FileInfo) (string, uint64, bool) { return "", 0, false }
 
-// Dev reports no device number, so --one-file-system cannot detect a remote
-// mount point.
+// Dev reports no device number, so --one-file-system can't detect a remote mount point.
 func (f *remoteFS) Dev(fi os.FileInfo) (uint64, bool) { return 0, false }
 
 func (f *remoteFS) SameFile(a, b os.FileInfo) bool { return false }

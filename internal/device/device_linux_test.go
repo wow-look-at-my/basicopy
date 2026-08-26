@@ -55,8 +55,7 @@ func TestClassString(t *testing.T) {
 }
 
 func TestLookupAndUtilTolerant(t *testing.T) {
-	// Exercise the real sysfs/diskstats path; tolerate environments (containers)
-	// that don't expose it.
+	// Tolerate a container with no sysfs block device info.
 	info := Lookup("/")
 	if info.Name == "" {
 		t.Skip("no sysfs block device info available in this environment")

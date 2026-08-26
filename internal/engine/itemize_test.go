@@ -209,8 +209,7 @@ func TestChecksumMtimeTouchup(t *testing.T) {
 	require.NoError(t, err)
 	assert.WithinDuration(t, mt, fi.ModTime(), time.Second, "the real run must touch the mtime up to the source's")
 
-	// Default (non-checksum) mode never reports a bare mtime touch-up: the
-	// same drift is a full recopy reason instead.
+	// Non-checksum mode treats mtime drift as a recopy reason, never a touch-up.
 	require.NoError(t, os.Chtimes(filepath.Join(dst, "src", "f.txt"), mt.Add(3*time.Hour), mt.Add(3*time.Hour)))
 	oq := &options.Options{Sources: []string{src}, TargetDir: dst, DryRun: true, Progress: "auto"}
 	_, outq, _ := captureRun(t, oq)
@@ -341,8 +340,7 @@ func TestJSONKeepsStdoutPure(t *testing.T) {
 	assert.Empty(t, out, "--json must suppress dry-run itemization on stdout")
 	assert.EqualValues(t, 1, sum.Files, "counting is unaffected by --json")
 
-	// A real --json --verbose run keeps stdout engine-silent too: first a copy
-	// (item lines), then a rerun (verbose skip-unchanged lines).
+	// --json silences stdout on both a copy run and a skip-unchanged rerun.
 	ov := &options.Options{Sources: []string{src}, TargetDir: dst, JSON: true, Verbose: true, Progress: "auto"}
 	_, vout, _ := captureRun(t, ov)
 	assert.Empty(t, vout, "--json wins over --verbose for stdout purity")

@@ -31,12 +31,7 @@ type Sample struct {
 	DevUtil    float64 // device %util [0,100]; <0 if unknown
 	Rotational bool    // is a rotational (HDD) device involved?
 
-	// Blocked reports that every stream is occupied and yet nothing at all
-	// moved during this interval: the copy is waiting on the storage rather
-	// than using it. Cloud-backed files that must be downloaded on first read
-	// (OneDrive/Dropbox placeholders), tape, a spinning-up disk, or a remote
-	// server that answers one request at a time all look like this. See the
-	// Blocked handling in Update for why it inverts the usual conclusion.
+	// Blocked reports every stream busy with zero throughput: storage, not W, is the limit.
 	Blocked bool
 }
 
@@ -131,20 +126,7 @@ func (c *Controller) Update(s Sample) int {
 		return c.w
 	}
 
-	// A blocked interval is the one case where the plateau logic below reaches
-	// exactly the wrong answer. Its whole premise is "the last increase did not
-	// raise throughput, so W is high enough" -- but a stall produces zero
-	// throughput no matter what W is, so that test reads as a failed increase
-	// and W gets reverted, forever. (0 > 0*(1+Margin) is false.) That is how a
-	// copy of cloud-backed files ends up downloading them strictly one at a
-	// time.
-	//
-	// When nothing is moving and every stream is occupied, the measurement
-	// carries no evidence that W is too high -- and the only harm a stall can
-	// do is leave latency un-overlapped, which more streams fix. So grow, at
-	// the usual dwell-limited rate, and leave the plateau state untouched: once
-	// bytes flow again the normal loop resumes from here and trims back any
-	// excess.
+	// Handle first: the plateau test below misreads a stall as "no gain" and reverts W forever.
 	if s.Blocked {
 		if c.canGrow(s) && c.w < c.max {
 			c.prevW = c.w
@@ -209,8 +191,7 @@ func (c *Controller) Update(s Sample) int {
 
 	case trimming:
 		if c.ema >= c.peakT*(1-c.Margin) {
-			// Removing a worker kept throughput within margin of the plateau
-			// peak: keep the lower W and keep looking for the minimum.
+			// Still within margin of the peak: keep the lower W.
 			c.refT = c.ema
 			c.ph = holding
 			c.hold = 0

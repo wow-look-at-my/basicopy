@@ -41,13 +41,10 @@ type Info struct {
 // Rotational reports whether the device is a spinning disk (seek-sensitive).
 func (i Info) Rotational() bool { return i.Class == HDD }
 
-// Lookup classifies the device backing path. It never errors; on any failure it
-// returns a zero Info (Class == Unknown).
+// Lookup classifies the device backing path. On failure it returns a zero Info.
 func Lookup(path string) Info { return lookup(path) }
 
-// UtilSampler reads a device's busy-% between successive Sample calls. A sampler
-// with an empty device name (or on an unsupported platform) always reports
-// ok=false.
+// UtilSampler reads a device's busy-% between successive Sample calls. Reports ok=false on an empty name.
 type UtilSampler struct {
 	name      string
 	prevTicks uint64

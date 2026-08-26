@@ -276,8 +276,7 @@ func TestRemoteHardlinkWarning(t *testing.T) {
 	assert.EqualValues(t, 2, sum.Files, "both links are copied as ordinary files")
 	assert.Zero(t, sum.Linked)
 
-	// Said once under --verbose, however many files pass through, and never in
-	// an ordinary run: it describes the protocol, not this tree.
+	// Logged once under --verbose regardless of file count; never in an ordinary run.
 	assert.Equal(t, 1, countSubstring(out, "no inode identity"))
 
 	o.Verbose = false

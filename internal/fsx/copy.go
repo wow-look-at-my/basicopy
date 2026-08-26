@@ -16,8 +16,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// DefaultBufSize is the portable fallback buffer used when no device-adaptive
-// size has been chosen.
+// DefaultBufSize is the fallback buffer size when no device-adaptive size is chosen.
 const DefaultBufSize = 1 << 20 // 1 MiB
 
 // CopyOptions controls a single file copy.
@@ -26,26 +25,14 @@ type CopyOptions struct {
 	Fsync    bool // fsync the temp file before the atomic rename.
 	BufSize  int  // copy buffer size; <= 0 uses DefaultBufSize.
 
-	// Progress, if non-nil, is called with the number of bytes newly written as
-	// a copy proceeds — usually many times for a large file. It exists so callers
-	// can observe live throughput and detect a genuine stall while a big file is
-	// in flight (rather than only learning the file's size once it finishes). It
-	// may be called from the copying goroutine many times per file, so a shared
-	// implementation must be safe for concurrent use.
+	// Progress, if set, is called with bytes newly written; may fire often and concurrently.
 	Progress func(n int64)
 
-	// Cancel, if non-nil, is polled between chunks as a copy proceeds. When it
-	// returns true the copy stops promptly and CopyFile returns ErrCanceled,
-	// with the temp file removed as usual — so an aborting run (Ctrl-C, the
-	// watchdog, --fatal-errors) stops mid-file instead of finishing a
-	// potentially enormous in-flight copy first. Like Progress, it may be
-	// called concurrently from every copying goroutine.
+	// Cancel, if set, is polled between chunks; true stops the copy early with ErrCanceled.
 	Cancel func() bool
 }
 
-// ErrCanceled is returned (wrapped) by CopyFile when CopyOptions.Cancel reports
-// the run is aborting. The interrupted temp file has been removed; no partial or
-// final destination file remains.
+// ErrCanceled means CopyOptions.Cancel aborted the copy; the temp file is already removed.
 var ErrCanceled = errors.New("copy canceled")
 
 // canceled reports whether the caller asked in-flight copies to stop.
@@ -94,8 +81,7 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 		return n, fmt.Errorf("chmod %s: %w", dstFS.Display(tmpName), err)
 	}
 	if o.Preserve && info != nil {
-		// Owner/xattr applied to the temp path so the rename publishes a fully
-		// formed file; times are applied after close (below) for the same reason.
+		// Owner/xattr apply to the temp path; rename then publishes a complete file.
 		if err := preserveOwner(srcFS, info, dstFS, tmpName); err != nil {
 			return n, err
 		}
@@ -137,10 +123,7 @@ func copyContents(dst, src vfs.File, info os.FileInfo, o CopyOptions) (int64, er
 	return plainCopy(dst, src, o)
 }
 
-// bufPool recycles copy buffers across files so a run over many files does not
-// allocate (and page-fault in) a fresh multi-megabyte buffer per file. Buffers of
-// mixed capacity may coexist; a pooled buffer too small for a request is dropped
-// and replaced, so the pool converges to the largest size in use.
+// bufPool recycles copy buffers; a too-small pooled buffer is dropped and replaced.
 var bufPool sync.Pool
 
 func getBuf(size int) *[]byte {
@@ -157,15 +140,10 @@ func getBuf(size int) *[]byte {
 
 func putBuf(b *[]byte) { bufPool.Put(b) }
 
-// plainCopy is the portable buffered fallback: a streamed copy from the current
-// offsets of src to dst in o.BufSize chunks. It is shared by the platform
-// copyData functions and used for every copy with a remote end. It deliberately
-// uses an explicit read/write loop rather than io.CopyBuffer: io.CopyBuffer would
-// delegate to *os.File's ReaderFrom and copy through its own fixed 32 KiB buffer,
-// ignoring the buffer size entirely (32x the intended syscall count) — and the
-// loop is also where progress and cancellation are handled. Large reads and
-// writes matter even more over SFTP, where the client splits a big buffer into
-// many packets in flight at once instead of one round trip per 32 KiB.
+// plainCopy streams src to dst in o.BufSize chunks; used for remote ends and as
+// the portable fallback. An explicit loop, not io.CopyBuffer: io.CopyBuffer
+// would delegate to *os.File's ReaderFrom and ignore BufSize (via its own fixed
+// 32 KiB buffer), and it has no hook for progress or cancellation.
 func plainCopy(dst io.Writer, src io.Reader, o CopyOptions) (int64, error) {
 	bufSize := o.BufSize
 	if bufSize <= 0 {

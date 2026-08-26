@@ -15,21 +15,14 @@ type Options struct {
 	// Sources is the list of SRC arguments (files and/or directories).
 	Sources []string
 
-	// Exactly one of TargetDir / TargetFile is set (enforced by Validate).
-	//
-	//   TargetDir:  each source lands under DIR as DIR/<basename(src)>.
-	//   TargetFile: the single source file is copied to exactly this path.
+	// Exactly one is set (Validate enforces this): TargetDir nests by basename, TargetFile is the exact path.
 	TargetDir  string
 	TargetFile string
 
-	// Contents copies each source directory's contents into TargetDir itself
-	// instead of nesting under the source's basename (rsync's SRC/
-	// trailing-slash semantics, as an explicit flag). File sources still land
-	// under their basename. Requires TargetDir.
+	// Contents copies a source dir's contents into TargetDir itself, not nested under its basename.
 	Contents bool
 
-	// NoAutoMkdirs turns a missing target parent directory into an error
-	// instead of creating it (and announcing each created dir on stderr).
+	// NoAutoMkdirs makes a missing target parent directory an error instead of auto-creating it.
 	NoAutoMkdirs bool
 
 	// Scaling / performance. These are escape hatches; the tool self-tunes.

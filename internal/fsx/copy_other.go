@@ -4,9 +4,7 @@ package fsx
 
 import "os"
 
-// copyData on non-Linux platforms uses the portable buffered copy. Native fast
-// paths (clonefile on macOS, CopyFileEx / block-clone on Windows) are layered on
-// here later; the buffered path is always correct.
+// copyData falls back to the portable buffered copy; no OS-native fast path yet.
 func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error) {
 	return plainCopy(dst, src, o)
 }

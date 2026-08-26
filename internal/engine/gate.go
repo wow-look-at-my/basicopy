@@ -2,11 +2,7 @@ package engine
 
 import "sync"
 
-// gate is a resizable concurrency limiter. At most `limit` holders may hold the
-// gate concurrently; the limit can be changed at runtime (the auto-scaling
-// controller uses setLimit to grow and shrink active parallelism). A fixed pool
-// of worker goroutines acquires the gate before each job, so changing the limit
-// changes how many of them may run at once without churning goroutines.
+// gate is a resizable concurrency limiter; setLimit changes limit live, so a fixed pool need not resize.
 type gate struct {
 	mu    sync.Mutex
 	cond  *sync.Cond
@@ -46,10 +42,8 @@ func (g *gate) release() {
 	g.mu.Unlock()
 }
 
-// saturated reports whether every allowed slot is in use, i.e. the copy is
-// limited by the gate rather than by a shortage of work. The connection scaler
-// asks before spending an SSH handshake: with idle slots, more transport
-// parallelism cannot possibly help.
+// saturated reports whether every slot is in use; the connection scaler checks
+// this before spending an SSH handshake.
 func (g *gate) saturated() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()

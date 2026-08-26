@@ -16,19 +16,9 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// A real OpenSSH sftp-server is a single process that answers one request at a
-// time. That is invisible on ordinary files -- requests are answered as fast as
-// the disk allows -- but it is the whole story when a read has to wait: a
-// OneDrive/Dropbox placeholder being downloaded on first access, a file on cold
-// storage, a disk spinning up. Every other request on that connection waits
-// behind it, so one connection means one file at a time no matter how many
-// workers the copy runs. Manual parallel scp does not have this problem only
-// because each scp is its own server process.
-//
-// pkg/sftp's in-process server answers requests from a worker pool, so it cannot
-// reproduce any of that. slowRemote puts a proxy in front of it that enforces
-// what the real thing does: strictly one request in flight per connection, and
-// every data read delayed.
+// A real sftp-server serves one request at a time; pkg/sftp's in-process
+// server does not. slowRemote proxies it to enforce that: one request in
+// flight per connection, reads delayed.
 func slowRemote(t *testing.T, hydration time.Duration) {
 	t.Helper()
 	old := vfs.StartTransport
@@ -59,9 +49,7 @@ func startSlowServer(hydration time.Duration) (*vfs.Transport, error) {
 		_ = server.Close()
 	}()
 
-	// A single token: a request may only be forwarded once the previous
-	// request's response has come back, exactly as a one-request-at-a-time
-	// server behaves.
+	// One token: forward the next request only after the prior response returns.
 	turn := make(chan struct{}, 1)
 	go func() {
 		for {
@@ -162,11 +150,7 @@ func TestSlowRemoteReadsRunInParallel(t *testing.T) {
 	require.EqualValues(t, files, sum.Files)
 	require.Zero(t, sum.Failed)
 
-	// A connection serves one request at a time, so a copy confined to one
-	// connection cannot beat "every delayed read, one after another" -- that is
-	// the floor this has to come in well under. Measuring the reads the run
-	// actually issued keeps the bound honest whatever the client does
-	// internally.
+	// One connection cannot beat serial reads; use the reads actually issued.
 	reads := readCount.Load()
 	require.Positive(t, reads)
 	serial := time.Duration(reads) * hydration

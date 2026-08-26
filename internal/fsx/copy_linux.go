@@ -59,13 +59,7 @@ func isSparse(info os.FileInfo) bool {
 	return int64(st.Blocks)*512 < info.Size()
 }
 
-// copyChunk caps each copy_file_range call so the int64->int conversion can't
-// overflow on 32-bit platforms (or for multi-GB files); the loop handles the
-// remainder. The cap also bounds how long a single syscall runs before progress
-// and cancellation are checked, so a large file in flight never looks like a
-// stall to the watchdog and an abort takes effect promptly — even on slow media
-// (128 MiB is ~4 s at a glacial 30 MB/s, well under the stall timeout). A var so
-// tests can shrink it.
+// copyChunk bounds each copy_file_range call, against overflow and slow progress/cancel checks.
 var copyChunk = int64(128 << 20) // 128 MiB
 
 // copyFileRange copies up to size bytes via copy_file_range. ok=false means the

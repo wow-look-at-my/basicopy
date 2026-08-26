@@ -87,8 +87,7 @@ func TestRemoteFileLifecycle(t *testing.T) {
 	in, err := fsys.Open(final)
 	require.NoError(t, err)
 	buf := make([]byte, 64)
-	// A remote read legitimately returns data and io.EOF in the same call, which
-	// every read loop in the copy path is written to handle.
+	// A remote read can return data and io.EOF in the same call.
 	n, err := in.Read(buf)
 	if err != nil {
 		require.ErrorIs(t, err, io.EOF)
@@ -96,8 +95,7 @@ func TestRemoteFileLifecycle(t *testing.T) {
 	assert.Equal(t, "hello remote", string(buf[:n]))
 	require.NoError(t, in.Close())
 
-	// Rename must replace an existing destination -- the atomic-publish step of
-	// every copy depends on it.
+	// Rename must replace an existing destination: the atomic-publish step depends on it.
 	second, err := fsys.CreateTemp(dir, ".basicopy-tmp-*")
 	require.NoError(t, err)
 	_, err = second.Write([]byte("replacement"))
@@ -206,8 +204,7 @@ func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	path := filepath.Join(dir, "f.txt")
 	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
 
-	// Hold one transfer open, then start another: the second must get its own
-	// connection rather than share.
+	// Hold one transfer open; the second must get its own connection, not share.
 	first, err := fsys.Open(path)
 	require.NoError(t, err)
 	rf := fsys.(*remoteFS)
@@ -283,8 +280,7 @@ func TestFirstConnectionStaysClearForMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rf.conns, 2)
 
-	// The transfer that arrived after the pool grew went to the new connection,
-	// and metadata keeps to the first one.
+	// The transfer that arrived after growth went to the new connection.
 	assert.Same(t, rf.conns[1], second.(*remoteFile).c)
 	rf.conns[0].inflight.Add(-1)
 	require.NoError(t, first.Close())
@@ -300,8 +296,7 @@ func TestUnsupportedRecognisesSFTPStatus(t *testing.T) {
 	require.NoError(t, err)
 	defer f.Close()
 
-	// The in-process server implements no fsync extension, which is exactly the
-	// "server cannot do this" case a copy must tolerate rather than fail on.
+	// The in-process server implements no fsync extension: a copy must tolerate this.
 	if err := f.Sync(); err != nil {
 		assert.True(t, Unsupported(err), "an op-unsupported status must read as unsupported, got %v", err)
 	}

@@ -155,8 +155,7 @@ func TestCopyFileReportsProgress(t *testing.T) {
 // whose data succeeded is never discarded over a chmod/chown/utimes failure.
 func TestMetaUnsupported(t *testing.T) {
 	assert.True(t, metaUnsupported(errors.ErrUnsupported))
-	// Real callers wrap the syscall error (e.g. with the path); errors.Is must
-	// still see through the wrapping.
+	// Real callers wrap the syscall error; errors.Is must still see through it.
 	assert.True(t, metaUnsupported(fmt.Errorf("chmod /mnt/x: %w", errors.ErrUnsupported)))
 	assert.False(t, metaUnsupported(nil))
 	assert.False(t, metaUnsupported(errors.New("some other failure")))

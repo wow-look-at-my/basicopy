@@ -85,12 +85,9 @@ type FS interface {
 	SameFile(a, b os.FileInfo) bool
 }
 
-// Unsupported reports whether err means "this filesystem cannot do that" rather
-// than "that failed". The standard library maps ENOSYS/ENOTSUP/EOPNOTSUPP to
-// errors.ErrUnsupported; an SFTP server answers the same thing with an
-// op-unsupported status, typically for an optional extension such as fsync or
-// hardlink. Callers use it to skip an operation instead of failing a copy whose
-// data is already safely written.
+// Unsupported reports "cannot do that" versus "that failed". SFTP signals it as an
+// op-unsupported status, the protocol's ENOTSUP; callers skip the op instead of
+// failing an otherwise-complete copy.
 func Unsupported(err error) bool {
 	if err == nil {
 		return false
@@ -105,21 +102,13 @@ func Unsupported(err error) bool {
 	return false
 }
 
-// Pooled is implemented by an FS backed by a self-sizing connection pool --
-// today, the SSH connections behind a remote host. It exists so a run can
-// report what the pool did, not so anything can steer it: the pool follows the
-// transfers asked of it, and how many of those run at once is already a
-// measured decision (see control.Controller).
+// Pooled is an FS with a self-sizing pool; concurrency is decided elsewhere (control.Controller).
 type Pooled interface {
-	// Pool reports how many connections are open and whether opening more has
-	// been abandoned (a host that needs an interactive credential cannot be
-	// asked for one twice mid-run).
+	// Pool reports open connections, and whether growth gave up (host wants a credential).
 	Pool() (open int, frozen bool)
 }
 
-// SameHost reports whether two FS values address the same filesystem namespace,
-// i.e. whether a path on one is meaningful on the other. Two connections to the
-// same host count as the same host.
+// SameHost: a path on one FS means the same thing on the other. Two connections to one host count as the same host.
 func SameHost(a, b FS) bool {
 	if a == nil || b == nil {
 		return false

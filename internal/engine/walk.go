@@ -17,9 +17,8 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// srcRoot is the per-source walk context: the filesystem the source lives on and
-// the absolute path of its root, against which exclude patterns are matched and
-// symlink targets are tested for containment.
+// srcRoot is per-source walk context: filesystem and root path, used for
+// exclude matching and symlink containment checks.
 type srcRoot struct {
 	fs      vfs.FS
 	rootAbs string
@@ -69,9 +68,7 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 			r.fail(err)
 			continue
 		}
-		// With --contents a directory source's entries land directly in the
-		// target directory (rsync's SRC/ trailing-slash semantics); otherwise
-		// (and always for file sources) the source nests under its basename.
+		// --contents flattens a directory source into the target (rsync SRC/); otherwise it nests under its basename.
 		contents := r.opts.Contents && fi.IsDir()
 		var dstPath string
 		if contents {
@@ -85,9 +82,7 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 			dstPath = r.dfs.Join(r.targetDir, base)
 		}
 		if fi.IsDir() && vfs.SameHost(sfs, r.dfs) {
-			// Overlap guards only mean anything when both ends are the same
-			// filesystem; /srv on this machine and /srv on another host are
-			// unrelated paths that happen to spell the same.
+			// Overlap guards apply only on the same filesystem; identical paths on different hosts are unrelated.
 			srcAbs, srcErr := sfs.Abs(clean)
 			dstAbs, dstErr := r.dfs.Abs(dstPath)
 			if srcErr == nil && dstErr == nil {
@@ -99,10 +94,9 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 					}
 					continue
 				}
-				// Note: in contents mode the target being the source's PARENT
-				// is legal (rsync SRC/ PARENT/), so no withinRoot guard the
-				// other way around -- except under --mirror, where the pass
-				// would then delete the source tree itself as "extraneous".
+				// In contents mode the target may legally be the source's PARENT
+				// (rsync SRC/ PARENT/) -- except under --mirror, which would then
+				// delete the source tree itself as extraneous.
 				if contents && r.opts.Mirror && withinRoot(sfs, dstAbs, srcAbs) {
 					r.fail(fmt.Errorf("--mirror with --contents would delete source %q inside target %q", sfs.Display(src), r.dfs.Display(dstPath)))
 					continue
@@ -186,13 +180,11 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 	}
 }
 
-// noteDirChange itemizes what happens to a destination directory: "mkdir" when
-// it doesn't exist yet, or an attribute-only "update" when it exists with
-// drifted mode/owner (never a pure-mtime line -- that is rsync's noisiest,
-// least useful output). The Lstat behind the answer is paid only on paths that
-// report (every dry run, and real runs under --verbose); the quiet real-run
-// fast path stays stat-free, so directory updates are not counted there (the
-// metadata pass re-applies directory attributes in real runs regardless).
+// noteDirChange itemizes a destination directory: "mkdir" if missing, or an
+// attribute-only "update" for drifted mode/owner (never a bare mtime line).
+// The Lstat behind this runs only on dry runs and --verbose; the quiet
+// real-run path stays stat-free, since the metadata pass reapplies
+// attributes anyway.
 func (r *runner) noteDirChange(root *srcRoot, srcDir, dstDir string, fi os.FileInfo) {
 	if !r.opts.DryRun && !r.opts.Verbose {
 		return
@@ -275,10 +267,7 @@ func (r *runner) visitSymlink(ctx context.Context, root *srcRoot, srcPath, dstPa
 		r.visitDir(ctx, root, srcPath, dstPath, tfi)
 		delete(r.onStack, key)
 	case tfi.Mode().IsRegular():
-		// Route through handleRegular (not enqueueFile directly) so a
-		// dereferenced symlink target gets the same skip-unchanged check and
-		// hardlink identity handling as any other regular file -- otherwise an
-		// incremental re-run recopies every in-tree symlink target forever.
+		// Route through handleRegular so a dereferenced symlink gets the same skip-unchanged and hardlink checks as a file.
 		r.handleRegular(root, srcPath, dstPath, tfi, parent)
 	default:
 		r.note("skipping special symlink target %s", root.fs.Display(srcPath))
@@ -286,11 +275,8 @@ func (r *runner) visitSymlink(ctx context.Context, root *srcRoot, srcPath, dstPa
 	}
 }
 
-// canonicalDir returns a stable identity for a symlinked directory, used to
-// detect loops. Locally that is the fully resolved path; remotely there is no
-// realpath-through-every-component call worth a round trip per link, so the
-// resolved target path stands in -- enough to catch a link that points at an
-// ancestor, which is what a loop is.
+// canonicalDir returns a loop-detection identity: the resolved path locally,
+// or the raw target remotely.
 func canonicalDir(fsys vfs.FS, srcPath, targetAbs string) (string, error) {
 	if fsys.Local() {
 		return filepath.EvalSymlinks(srcPath)
@@ -399,10 +385,9 @@ func (r *runner) excluded(root *srcRoot, srcPath string, isDir bool) bool {
 	return false
 }
 
-// matchEntry applies one --exclude/--include pattern to an entry. A pattern
-// ending in '/' matches directories only (rsync's 'node_modules/' syntax): the
-// trailing slash(es) are stripped for the glob match and non-directories never
-// match. Patterns without a trailing slash match files and directories alike.
+// matchEntry applies one --exclude/--include pattern. A trailing '/' (rsync's
+// 'node_modules/' syntax) matches directories only; the slash is stripped
+// before the glob match.
 func matchEntry(fsys vfs.FS, pattern, rel, base string, isDir bool) bool {
 	if trimmed := strings.TrimRight(pattern, "/"); trimmed != pattern {
 		if !isDir || trimmed == "" {

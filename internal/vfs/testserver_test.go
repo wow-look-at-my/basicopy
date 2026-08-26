@@ -21,9 +21,7 @@ func pipeTransport(loc Location, extra bool) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Closing the server when Serve returns mirrors what a real ssh subprocess
-	// does when its stdin closes: the far end goes away and the client's read
-	// side sees EOF instead of blocking forever.
+	// Mirrors a real ssh subprocess: closed stdin means the far end vanishes and the client sees EOF.
 	go func() {
 		_ = server.Serve()
 		_ = server.Close()

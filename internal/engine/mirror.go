@@ -10,10 +10,8 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// mirrorExtraneous deletes destination entries that have no counterpart in the
-// source (the --mirror / robocopy /MIR behavior). It runs after copying so the
-// destination already reflects the source's content, and only under the roots
-// the walk actually processed.
+// mirrorExtraneous runs --mirror: delete destination entries with no source
+// counterpart, after copying, under the walked roots.
 func (r *runner) mirrorExtraneous() {
 	for _, m := range r.mirrorRoots {
 		r.mirrorDir(m.srcFS, m.dest, m.src)
@@ -50,9 +48,8 @@ func (r *runner) mirrorDir(srcFS vfs.FS, destDir, srcDir string) {
 		}
 	}
 	if removed && r.copyOpts.Preserve {
-		// Deleting entries bumped destDir's mtime after the copy phase already
-		// applied directory metadata; restore it from the source so --mirror
-		// doesn't clobber preserved directory times.
+		// A delete bumps destDir's mtime after the copy phase set it; restore it
+		// so --mirror does not clobber preserved directory times.
 		if fi, err := srcFS.Lstat(srcDir); err == nil {
 			if err := fsx.ApplyMeta(srcFS, srcDir, r.dfs, destDir, fi, true); err != nil {
 				r.warn("metadata on %s: %v", r.dfs.Display(destDir), err)
