@@ -35,7 +35,7 @@ func TestOnStallNonTTYAborts(t *testing.T) {
 func TestProgressCountTracksInflightBytes(t *testing.T) {
 	r := &runner{opts: &options.Options{}}
 	base := r.progressCount()
-	r.moved.Add(64 << 20) // 64 MiB streamed mid-copy, before the file finishes
+	r.moved.Add(64 << 20)
 	assert.EqualValues(t, base+(64<<20), r.progressCount(),
 		"in-flight bytes must register as forward progress")
 }

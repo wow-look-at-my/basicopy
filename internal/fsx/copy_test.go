@@ -102,11 +102,11 @@ func TestPlainCopyDirect(t *testing.T) {
 
 // TestPlainCopyProgress checks that the buffered path reports incremental
 // progress: a file larger than the copy's internal chunk fires the callback more
-// than once, and the reported bytes sum to the file size.
+// than a single time, and the reported bytes sum to the file size.
 func TestPlainCopyProgress(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "a")
-	want := make([]byte, 1<<20) // 1 MiB -> many reads through the copy loop
+	want := make([]byte, 1<<20)
 	for i := range want {
 		want[i] = byte(i)
 	}
@@ -177,9 +177,9 @@ func TestCopyFileFsync(t *testing.T) {
 	assert.Equal(t, []byte("durable"), got)
 }
 
-// TestPlainCopyCancelStopsEarly cancels after the first chunk's progress: the
-// buffered loop must stop at the next chunk boundary with ErrCanceled rather
-// than draining the rest of the file.
+// TestPlainCopyCancelStopsEarly cancels after the earliest chunk's progress:
+// the buffered loop must stop at the next chunk boundary with ErrCanceled
+// rather than draining the rest of the file.
 func TestPlainCopyCancelStopsEarly(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "a")

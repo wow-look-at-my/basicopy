@@ -29,8 +29,6 @@ func (r *runner) progressEnabled() bool {
 	}
 }
 
-// runProgress draws a periodic one-line status to stderr (rate is an EWMA of the
-// byte throughput) and clears the line on exit so the final summary prints clean.
 func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 	if !r.progressEnabled() {
 		return

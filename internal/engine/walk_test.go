@@ -255,10 +255,6 @@ func TestMirrorMultiSourceSweepsEachRoot(t *testing.T) {
 	assert.NoError(t, e2)
 }
 
-// TestMirrorSkipsFailedSource: a source that fails its walk guards (here: it
-// doesn't exist) must not have its destination swept -- with the old
-// sources-derived sweep, one mistyped source emptied that source's whole
-// destination tree.
 func TestMirrorSkipsFailedSource(t *testing.T) {
 	root := t.TempDir()
 	good := filepath.Join(root, "good")

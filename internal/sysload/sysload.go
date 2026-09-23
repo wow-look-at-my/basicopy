@@ -11,13 +11,13 @@ type Sampler struct {
 	primed    bool
 }
 
-// New returns a fresh Sampler. The first Sample call primes the baseline.
+// New returns a fresh Sampler. The earliest Sample call primes the baseline.
 func New() *Sampler { return &Sampler{} }
 
 var readCPUTimesForSample = readCPUTimes
 
-// Sample returns the busy fraction [0,1] of total CPU since the previous call.
-// The first call (and any call on an unsupported platform) returns ok=false.
+// The earliest call (and any call on an unsupported platform) returns
+// ok=false.
 func (s *Sampler) Sample() (busy float64, ok bool) {
 	idle, total, ok := readCPUTimesForSample()
 	if !ok {

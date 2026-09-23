@@ -19,8 +19,6 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// File is the subset of *os.File the copy primitives need, so an SFTP file
-// handle can stand in for a local one.
 type File interface {
 	io.ReadWriteCloser
 	io.Seeker
@@ -30,7 +28,7 @@ type File interface {
 	Chmod(mode os.FileMode) error
 }
 
-// FS is one side of a copy: the local machine or one remote host.
+// FS is a single side of a copy: the local machine or a single remote host.
 //
 // Capability queries (Owner, FileID, Dev, Avail) return ok=false rather than an
 // error when the underlying filesystem or protocol cannot answer -- SFTP has no
@@ -81,7 +79,7 @@ type FS interface {
 	Avail(dir string) (int64, bool)                            // free bytes for the space guard
 	Owner(fi os.FileInfo) (uid, gid int, ok bool)              // Unix ownership
 	FileID(fi os.FileInfo) (key string, nlink uint64, ok bool) // inode identity (hardlinks)
-	Dev(fi os.FileInfo) (dev uint64, ok bool)                  // st_dev (--one-file-system)
+	Dev(fi os.FileInfo) (dev uint64, ok bool)                  // st_dev (--a single
 	SameFile(a, b os.FileInfo) bool
 }
 
@@ -108,7 +106,7 @@ type Pooled interface {
 	Pool() (open int, frozen bool)
 }
 
-// SameHost: a path on one FS means the same thing on the other. Two connections to one host count as the same host.
+// SameHost: a path on a single FS means the same thing on the other. Connections to a single host count as the same host.
 func SameHost(a, b FS) bool {
 	if a == nil || b == nil {
 		return false

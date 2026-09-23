@@ -77,8 +77,7 @@ func readIOTicks(name string) (uint64, bool) {
 }
 
 // parseIOTicks extracts the io_ticks field (ms spent doing I/O) for the named
-// device from /proc/diskstats. Field layout per line: major minor name then 11+
-// stats; io_ticks is the 10th stat (0-based index 12 overall).
+// device from /proc/diskstats.
 func parseIOTicks(data, name string) (uint64, bool) {
 	for _, line := range strings.Split(data, "\n") {
 		f := strings.Fields(line)

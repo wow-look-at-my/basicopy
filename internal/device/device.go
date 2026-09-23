@@ -30,10 +30,10 @@ func (c Class) String() string {
 	}
 }
 
-// Info describes the physical device backing a path. Zero values mean "unknown".
+// Info describes the physical device backing a path. Empty values mean "unknown".
 type Info struct {
 	Class         Class
-	OptimalIOSize int64  // bytes; 0 if unknown
+	OptimalIOSize int64
 	DeviceID      string // stable id of the physical device (same-spindle detection)
 	Name          string // kernel name, e.g. "vda" or "nvme0n1"; "" if unknown
 }
@@ -41,7 +41,7 @@ type Info struct {
 // Rotational reports whether the device is a spinning disk (seek-sensitive).
 func (i Info) Rotational() bool { return i.Class == HDD }
 
-// Lookup classifies the device backing path. On failure it returns a zero Info.
+// Lookup classifies the device backing path. On failure it returns a empty Info.
 func Lookup(path string) Info { return lookup(path) }
 
 // UtilSampler reads a device's busy-% between successive Sample calls. Reports ok=false on an empty name.
@@ -57,9 +57,8 @@ func NewUtilSampler(name string) *UtilSampler { return &UtilSampler{name: name} 
 
 var readIOTicksForSample = readIOTicks
 
-// Sample returns the device %util [0,100] since the previous call. The first call
-// primes the baseline and returns ok=false, as does any call when the device is
-// unknown or unsupported.
+// The earliest call primes the baseline and returns ok=false, as does any call
+// when the device is unknown or unsupported.
 func (u *UtilSampler) Sample() (utilPct float64, ok bool) {
 	if u.name == "" {
 		return 0, false

@@ -22,6 +22,7 @@ import (
 // underneath.
 func fakeRemote(t *testing.T) {
 	t.Helper()
+	t.Serial()
 	old := vfs.StartTransport
 	vfs.StartTransport = func(vfs.Location, bool) (*vfs.Transport, error) {
 		srvIn, cliOut := io.Pipe()
@@ -143,7 +144,7 @@ func TestRemoteTargetFile(t *testing.T) {
 	assert.Contains(t, errOut, "created directory pc:"+filepath.Join(root, "new"))
 }
 
-// TestRemoteIncrementalRerun: the second run of the same copy must move nothing.
+// TestRemoteIncrementalRerun: the next run of the same copy must move nothing.
 // This is the property that makes remote copies usable at all -- without it
 // every re-run would re-send the whole tree over the wire.
 func TestRemoteIncrementalRerun(t *testing.T) {
@@ -276,7 +277,7 @@ func TestRemoteHardlinkWarning(t *testing.T) {
 	assert.EqualValues(t, 2, sum.Files, "both links are copied as ordinary files")
 	assert.Zero(t, sum.Linked)
 
-	// Logged once under --verbose regardless of file count; never in an ordinary run.
+	// Logged a single time under --verbose regardless of file count; never in an ordinary run.
 	assert.Equal(t, 1, countSubstring(out, "no inode identity"))
 
 	o.Verbose = false

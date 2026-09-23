@@ -22,6 +22,7 @@ import (
 type srcRoot struct {
 	fs      vfs.FS
 	rootAbs string
+	keep    string // --move leaves this directory in place (the --contents root)
 }
 
 func (r *runner) walk(ctx context.Context) error {
@@ -45,6 +46,9 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 	}
 	if err := r.ensureRoot(r.dfs.Dir(r.targetFile)); err != nil {
 		return err
+	}
+	if r.renameRoot(sfs, src, r.targetFile, fi) {
+		return nil
 	}
 	r.initSpaceGuard(r.dfs.Dir(r.targetFile))
 	r.setRootDev(sfs, fi)
@@ -106,13 +110,20 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 		if err := r.ensureRoot(r.targetDir); err != nil {
 			return err
 		}
+		if !contents && r.renameRoot(sfs, src, dstPath, fi) {
+			continue
+		}
 		if r.opts.Mirror {
 			r.mirrorRoots = append(r.mirrorRoots, mirrorRoot{srcFS: sfs, dest: dstPath, src: clean})
 		}
 		r.initSpaceGuard(r.targetDir)
 		r.setRootDev(sfs, fi)
 		rootAbs, _ := sfs.Abs(clean)
-		r.visit(ctx, &srcRoot{fs: sfs, rootAbs: rootAbs}, src, dstPath, fi, nil)
+		root := &srcRoot{fs: sfs, rootAbs: rootAbs}
+		if contents {
+			root.keep = src
+		}
+		r.visit(ctx, root, src, dstPath, fi, nil)
 	}
 	return nil
 }
@@ -178,6 +189,7 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 		}
 		r.visit(ctx, root, root.fs.Join(srcDir, cfi.Name()), r.dfs.Join(dstDir, cfi.Name()), cfi, state)
 	}
+	r.moveDir(root, srcDir, dstDir)
 }
 
 // noteDirChange itemizes a destination directory: "mkdir" if missing, or an
@@ -209,7 +221,7 @@ func (r *runner) enqueueFile(root *srcRoot, srcPath, dstPath string, fi os.FileI
 	if r.opts.DryRun {
 		r.files.Add(1)
 		r.bytes.Add(fi.Size())
-		r.item("would copy %s (%s)", r.dfs.Display(dstPath), reason)
+		r.item("would %s %s (%s)", r.transferVerb(), r.dfs.Display(dstPath), reason)
 		return
 	}
 	r.addDirWork(parent)
@@ -222,7 +234,8 @@ func (r *runner) visitSymlink(ctx context.Context, root *srcRoot, srcPath, dstPa
 		r.fail(err)
 		return
 	}
-	if r.opts.NoFollowSymlinks {
+	// A move takes the link itself, as mv does; following it would leave the target at the destination again.
+	if r.opts.NoFollowSymlinks || r.opts.Move {
 		r.recreateSymlink(root, srcPath, target, dstPath, fi)
 		return
 	}
@@ -290,6 +303,7 @@ func (r *runner) recreateSymlink(root *srcRoot, srcPath, target, dstPath string,
 	if cur, err := r.dfs.Readlink(dstPath); err == nil && cur == target {
 		r.skipped.Add(1)
 		r.verbose("skip unchanged %s", r.dfs.Display(dstPath))
+		r.moveSource(root.fs, srcPath, dstPath)
 		return
 	}
 	if r.opts.DryRun {
@@ -307,6 +321,7 @@ func (r *runner) recreateSymlink(root *srcRoot, srcPath, target, dstPath string,
 	}
 	r.symlinks.Add(1)
 	r.item("link %s -> %s", r.dfs.Display(dstPath), target)
+	r.moveSource(root.fs, srcPath, dstPath)
 }
 
 // ensureRoot makes the destination root exist, creating missing ancestors and
@@ -385,9 +400,9 @@ func (r *runner) excluded(root *srcRoot, srcPath string, isDir bool) bool {
 	return false
 }
 
-// matchEntry applies one --exclude/--include pattern. A trailing '/' (rsync's
-// 'node_modules/' syntax) matches directories only; the slash is stripped
-// before the glob match.
+// matchEntry applies a single exclude/--include pattern. A trailing '/'
+// (rsync's 'node_modules/' syntax) matches directories only; the slash is
+// stripped before the glob match.
 func matchEntry(fsys vfs.FS, pattern, rel, base string, isDir bool) bool {
 	if trimmed := strings.TrimRight(pattern, "/"); trimmed != pattern {
 		if !isDir || trimmed == "" {

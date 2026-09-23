@@ -72,8 +72,8 @@ func TestHardlinkPreserved(t *testing.T) {
 	assertSameContent(t, a, filepath.Join(dst, "src", "h0.txt"))
 }
 
-// hardlinkPair creates src/h0.txt + src/h1.txt as one multiply-linked inode and
-// returns validated options copying src into root/dst.
+// hardlinkPair creates src/h0.txt + src/h1.txt as a single multiply-linked
+// inode and returns validated options copying src into root/dst.
 func hardlinkPair(t *testing.T) (o *options.Options, dst string) {
 	t.Helper()
 	root := t.TempDir()
@@ -98,7 +98,7 @@ func assertHardlinked(t *testing.T, a, b string) {
 }
 
 // TestHardlinkRelinkedToUnchangedPrimary reproduces the incremental-run bug where
-// the first path to a linked inode is skipped as unchanged and therefore never
+// the earliest path to a linked inode is skipped as unchanged and therefore never
 // recorded as the link primary: a secondary missing from the destination was then
 // recopied as an independent duplicate instead of relinked, silently losing the
 // hardlink structure (and doubling the stored data).
@@ -132,7 +132,7 @@ func TestHardlinkRerunNoChurn(t *testing.T) {
 	assertHardlinked(t, filepath.Join(dst, "src", "h0.txt"), filepath.Join(dst, "src", "h1.txt"))
 }
 
-// TestHardlinkRejoinsSeparatedCopies checks that a destination holding two
+// TestHardlinkRejoinsSeparatedCopies checks that a destination holding
 // identical but independent files (e.g. produced by an earlier --no-hardlinks
 // copy) is restored to the source's link structure on a default re-run.
 func TestHardlinkRejoinsSeparatedCopies(t *testing.T) {
@@ -150,8 +150,8 @@ func TestHardlinkRejoinsSeparatedCopies(t *testing.T) {
 }
 
 // TestDryRunHardlinkItemized: dry runs use the same hardlink bookkeeping as
-// real ones, so a linked pair itemizes as one copy plus one hardlink instead
-// of two independent copies (matching what the real run will do).
+// real ones, so a linked pair itemizes as a single copy plus a single
+// hardlink instead of independent copies (matching what the real run will do).
 func TestDryRunHardlinkItemized(t *testing.T) {
 	o, dst := hardlinkPair(t)
 	od := *o

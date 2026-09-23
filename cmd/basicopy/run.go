@@ -9,7 +9,6 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
 
-// run drives a copy from validated options and reports a one-line summary.
 func run(cmd *cobra.Command, o *options.Options) error {
 	sum, err := engine.Run(cmd.Context(), o)
 	if err != nil {
@@ -26,6 +25,9 @@ func run(cmd *cobra.Command, o *options.Options) error {
 		extra := ""
 		if o.Mirror {
 			extra = fmt.Sprintf(", %d deleted", sum.Deleted)
+		}
+		if o.Move {
+			extra += fmt.Sprintf(", %d renamed, %d source entries removed", sum.Renamed, sum.Removed)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(),
 			"basicopy: %d files, %d dirs, %d symlinks, %d hardlinks, %d updated%s, %s; %d skipped, %d failed\n",

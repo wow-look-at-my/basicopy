@@ -14,7 +14,7 @@ func TestParseCPULine(t *testing.T) {
 	stat := "cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 25 0 12 200 12 0 0 0 0 0\nintr 1 2 3\n"
 	idle, total, ok := parseCPULine(stat)
 	require.True(t, ok)
-	assert.EqualValues(t, 850, idle)   // idle(800) + iowait(50)
+	assert.EqualValues(t, 850, idle)
 	assert.EqualValues(t, 1000, total) // sum of all fields
 }
 

@@ -71,8 +71,7 @@ func (r *runner) runWatchdog(ctx context.Context, stop <-chan struct{}) {
 	}
 }
 
-// onStall decides what to do when progress has stalled. Without a controlling
-// terminal it aborts; with one it asks the user whether to keep waiting.
+// onStall decides what to do when progress has stalled.
 func (r *runner) onStall() (continueWaiting bool, next time.Duration) {
 	if !isTerminal() {
 		r.elog("basicopy: no forward progress for %s", stallTimeout)

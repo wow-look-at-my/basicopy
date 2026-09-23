@@ -8,6 +8,7 @@ import (
 )
 
 func TestRetryBackoffCapsAtTwoSeconds(t *testing.T) {
+	t.Serial()
 	old := retryBaseDelay
 	retryBaseDelay = 100 * time.Millisecond
 	defer func() { retryBaseDelay = old }()

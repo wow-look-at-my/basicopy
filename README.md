@@ -89,6 +89,7 @@ go-toolchain            # tidy, test, build -> ./build/basicopy
 | Warn on out-of-tree symlinks | on (stderr) | `--no-symlink-warnings` |
 | Error handling | isolate + continue, non-zero exit | `--fatal-errors` |
 | Mirror / delete extraneous | off (destructive) | `--mirror` |
+| Move (remove the source) | off | `--move` |
 | fsync each file | off | `--fsync` |
 
 Short flags exist only where they match the long flag's first letter: `-c`
@@ -116,6 +117,10 @@ basicopy ~/project --target-dir myotherpc:/srv/project --mirror
 
 # Pull one back.
 basicopy myotherpc:/srv/project --target-dir ~/restore
+
+# Move instead of copy: one rename on the same filesystem, else copy then
+# remove each source entry that reached the target.
+basicopy ~/Downloads/iso --target-dir /mnt/archive --move
 
 # Cap parallelism on a shared box; exclude build junk. A pattern ending in '/'
 # matches directories only ('node_modules/' never hits a file of that name).
@@ -149,6 +154,20 @@ An unchanged file whose mode/owner drifted (or, with `--checksum`, whose mtime
 drifted while the content is verifiably identical) is repaired in place instead
 of staying wrong forever, and counted as "updated" in the summary. Unchanged
 entries stay silent unless `--verbose` (`skip unchanged ...`).
+
+### Moving
+
+`--move` renames a source root in one step when the source and target share a
+filesystem and the target name is free. Otherwise it copies, then removes each
+source entry that is at the target, after `--mirror` finishes. An interrupted
+move can be re-run: files already at the target count as unchanged, and their
+sources are removed.
+
+- Symlinks move as links, as `mv` moves them.
+- Excluded entries stay, and so do the directories above them.
+- `--contents` moves what is inside a source directory and leaves the directory.
+- basicopy never removes a source that is the target itself (a target reached
+  through a symlink to the source).
 
 ### Remote paths
 

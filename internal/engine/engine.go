@@ -2,8 +2,8 @@
 // sources (pipelined), and copies files concurrently through a resizable gate
 // using the fsx primitives. Directory creation and symlink handling happen on the
 // walk goroutine so a child's parent always exists before the child is scheduled;
-// directory metadata is applied once each directory's own child entries are done
-// so file writes don't bump directory mtimes back.
+// directory metadata is applied a single time each directory's own child entries
+// are done so file writes don't bump directory mtimes back.
 //
 // Either end may be a remote host written as "[user@]host:/path": every
 // filesystem call goes through the vfs seam, so the walk, the worker pool, the
@@ -29,8 +29,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
-// Summary reports the outcome of a copy run. Failed > 0 should map to a non-zero
-// process exit.
+// Summary reports the outcome of a copy run.
 type Summary struct {
 	Files    int64 `json:"files"`
 	Dirs     int64 `json:"dirs"`
@@ -38,6 +37,8 @@ type Summary struct {
 	Linked   int64 `json:"hardlinks"` // hardlinks preserved
 	Updated  int64 `json:"updated"`   // attribute-only touch-ups on otherwise unchanged entries
 	Deleted  int64 `json:"deleted"`   // extraneous destination entries removed (--mirror)
+	Renamed  int64 `json:"renamed"`   // source roots moved by a single rename
+	Removed  int64 `json:"removed"`   // source entries removed after their transfer (--move)
 	Bytes    int64 `json:"bytes"`
 	Skipped  int64 `json:"skipped"`
 	Failed   int64 `json:"failed"`
@@ -77,7 +78,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	}
 	// moved advances mid-copy, so live progress isn't flat until a large file finishes.
 	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
-	// Stops in-flight copies at the next chunk boundary once the run aborts.
+	// Stops in-flight copies at the next chunk boundary a single time the run aborts.
 	r.copyOpts.Cancel = func() bool { return r.abortErr() != nil }
 
 	// Ctx cancellation (Ctrl-C) aborts the run; fsx.CopyFile cleans up its own temp file.
@@ -121,6 +122,9 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	}
 	if opts.Mirror {
 		r.mirrorExtraneous()
+	}
+	if opts.Move && !opts.DryRun && ctx.Err() == nil {
+		r.removeMovedSources(ctx)
 	}
 	if !opts.DryRun {
 		close(stopBg)
@@ -170,7 +174,13 @@ type runner struct {
 	startedAt time.Time
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
-	dirMetaTotal, dirMetaDone                                               atomic.Int64
+	renamed, removed                                                        atomic.Int64
+
+	// --move: source entries to remove a single time the run is done; movedDirs is walk-goroutine-owned.
+	moveMu                    sync.Mutex
+	movedFiles                []movedEntry
+	movedDirs                 []movedEntry
+	dirMetaTotal, dirMetaDone atomic.Int64
 
 	// moved is a monotonic live-progress counter, distinct from bytes (the completed-copy total used for the summary).
 	moved atomic.Int64
@@ -191,7 +201,7 @@ type runner struct {
 	hardlinkMap    map[string]hlPrimary // inode key -> primary destination
 	hardlinks      []linkEnt            // secondary links to create after all copies
 	mirrorRoots    []mirrorRoot         // dest/src pairs the --mirror pass may prune
-	rootDev        uint64               // device of the current source root (one-file-system)
+	rootDev        uint64               // device of the current source root (a single
 	rootDevSet     bool
 }
 
@@ -222,9 +232,7 @@ func (r *runner) resolveTarget() error {
 	return nil
 }
 
-// workerCount returns the gate ceiling and its initial limit. With --max-threads
-// the count is pinned; otherwise it scales with CPU count (the M4 controller will
-// drive the live limit between 1 and the ceiling).
+// workerCount returns the gate ceiling and its initial limit.
 func workerCount(opts *options.Options) (max, initial int) {
 	max = opts.MaxThreads
 	if max <= 0 {
@@ -236,7 +244,7 @@ func workerCount(opts *options.Options) (max, initial int) {
 			max = 256
 		}
 	}
-	// Neutral start before the controller's first tick; it resizes from here.
+	// Neutral start before the controller's earliest tick; it resizes from here.
 	initial = 2 * runtime.NumCPU()
 	if initial < 4 {
 		initial = 4
@@ -285,7 +293,7 @@ func (r *runner) copyOne(job fileJob) {
 			// These bytes will never move: undo the discovery accounting.
 			r.totalFiles.Add(-1)
 			r.totalBytes.Add(-job.info.Size())
-			r.finishUnchangedFile(job.srcFS, job.dst, job.info, v)
+			r.finishUnchangedFile(job.srcFS, job.src, job.dst, job.info, v)
 			return
 		}
 		reason = v.Reason
@@ -313,7 +321,8 @@ func (r *runner) copyOne(job fileJob) {
 	}
 	r.files.Add(1)
 	r.bytes.Add(n)
-	r.item("copy %s (%s)", r.dfs.Display(job.dst), reason)
+	r.item("%s %s (%s)", r.transferVerb(), r.dfs.Display(job.dst), reason)
+	r.moveSource(job.srcFS, job.src, job.dst)
 }
 
 // finishUnchangedFile finalizes a destination file whose content is already up
@@ -322,7 +331,8 @@ func (r *runner) copyOne(job fileJob) {
 // counts as updated; otherwise it is a plain skip. Attribute application is
 // best-effort, matching the directory-metadata policy (a warning, not a
 // failure).
-func (r *runner) finishUnchangedFile(srcFS vfs.FS, dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
+func (r *runner) finishUnchangedFile(srcFS vfs.FS, srcPath, dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
+	defer r.moveUnchanged(srcFS, srcPath, dstPath)
 	if r.copyOpts.Preserve {
 		if diff := attrDiff(srcInfo, v); diff != "" {
 			if !r.opts.DryRun {
@@ -396,14 +406,14 @@ func (r *runner) summary() *Summary {
 		Linked:   r.linked.Load(),
 		Updated:  r.updated.Load(),
 		Deleted:  r.deleted.Load(),
+		Renamed:  r.renamed.Load(),
+		Removed:  r.removed.Load(),
 		Bytes:    r.bytes.Load(),
 		Skipped:  r.skipped.Load(),
 		Failed:   r.failed.Load(),
 	}
 }
 
-// printLine writes one line to w under the shared output lock, so stdout item
-// lines and stderr diagnostics never tear mid-line.
 func (r *runner) printLine(w io.Writer, format string, a ...any) {
 	r.outMu.Lock()
 	fmt.Fprintf(w, format+"\n", a...)

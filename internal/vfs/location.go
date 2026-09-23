@@ -6,9 +6,6 @@ import (
 	"strings"
 )
 
-// Location is a parsed source or destination argument: either a local path or a
-// remote one written the way scp/rsync write it, "[user@]host:/path", or as an
-// "ssh://[user@]host[:port]/path" URL.
 type Location struct {
 	User   string // empty means "whatever ssh would pick" (ssh_config / current user)
 	Host   string // empty for a local path
@@ -23,7 +20,7 @@ type Location struct {
 // String renders the location the way the user would have typed it.
 func (l Location) String() string { return l.Prefix + l.Path }
 
-// ConnKey lets two arguments naming the same host share one ssh process.
+// ConnKey lets arguments naming the same host share a single ssh process.
 func (l Location) ConnKey() string { return l.User + "@" + l.Host + ":" + l.Port }
 
 const sshScheme = "ssh://"
@@ -31,9 +28,9 @@ const sshScheme = "ssh://"
 // Parse splits an argument into a local path or a remote host+path.
 //
 // The rules match scp/rsync so muscle memory transfers: a colon before the
-// first "/" makes it remote ("pc:/srv", "me@pc:notes"), and anything else is
-// local. A local path whose first segment really does contain a colon can be
-// forced local by writing it as "./weird:name" or with an absolute path.
+// earliest "/" makes it remote ("pc:/srv", "me@pc:notes"), and anything else
+// is local. A local path whose earliest segment really does contain a colon
+// can be forced local by writing it as "./weird:name" or with an absolute path.
 func Parse(arg string) (Location, error) {
 	if strings.HasPrefix(arg, sshScheme) {
 		return parseURL(arg)

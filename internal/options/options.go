@@ -15,7 +15,6 @@ type Options struct {
 	// Sources is the list of SRC arguments (files and/or directories).
 	Sources []string
 
-	// Exactly one is set (Validate enforces this): TargetDir nests by basename, TargetFile is the exact path.
 	TargetDir  string
 	TargetFile string
 
@@ -26,8 +25,8 @@ type Options struct {
 	NoAutoMkdirs bool
 
 	// Scaling / performance. These are escape hatches; the tool self-tunes.
-	MaxThreads int   // optional hard cap on the autoscaler; 0 = auto.
-	BufferSize int64 // override the device-adaptive buffer size; 0 = auto.
+	MaxThreads int
+	BufferSize int64
 
 	// Selection.
 	Exclude       []string // glob patterns to skip.
@@ -37,12 +36,13 @@ type Options struct {
 	// Behavior.
 	DryRun            bool
 	Mirror            bool // delete extraneous files in the target (destructive).
+	Move              bool // remove each source entry a single time the destination
 	Checksum          bool // compare by BLAKE3 content hash, not size+mtime.
 	NoHardlinks       bool // duplicate hardlinked files instead of preserving links.
 	NoFollowSymlinks  bool // copy symlinks as links instead of dereferencing them.
 	NoSymlinkWarnings bool // suppress the stderr notice for out-of-tree symlinks.
 	NoPreserve        bool // don't preserve metadata (mode/times/owner/xattr/Linux ACL).
-	FatalErrors       bool // abort on the first error instead of isolate-and-continue.
+	FatalErrors       bool
 	Fsync             bool // fsync each file before the atomic rename (durability).
 
 	// Output.
@@ -53,7 +53,7 @@ type Options struct {
 }
 
 // Validate checks the option combination for internal consistency and returns a
-// human-readable error describing the first problem found.
+// human-readable error describing the earliest problem found.
 func (o *Options) Validate() error {
 	if len(o.Sources) == 0 {
 		return fmt.Errorf("no SRC given: specify at least one source")
@@ -102,8 +102,7 @@ func (o *Options) Validate() error {
 }
 
 // ParseSize parses a human size string such as "4MiB", "64MB", "512k", or a bare
-// byte count. Binary units use the "i" infix (KiB, MiB, GiB, TiB); decimal units
-// (KB, MB, GB, TB) are powers of 1000. A bare number is bytes. Empty string -> 0.
+// byte count. A bare number is bytes.
 func ParseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

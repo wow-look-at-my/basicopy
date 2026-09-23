@@ -79,8 +79,7 @@ func preserveOwner(srcFS vfs.FS, info os.FileInfo, dstFS vfs.FS, dst string) err
 	return nil
 }
 
-// preserveTimes sets dst's mtime to match info. SFTP v3 stores whole-second
-// times only, which is why unchanged-file comparison tolerates a 1s diff.
+// preserveTimes sets dst's mtime to match info.
 func preserveTimes(dstFS vfs.FS, dst string, info os.FileInfo) error {
 	mt := info.ModTime()
 	if err := dstFS.Chtimes(dst, mt, mt); err != nil && !metaUnsupported(err) {

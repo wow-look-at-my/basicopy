@@ -18,7 +18,7 @@ import (
 func TestCopyFileSparse(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "sparse.bin")
-	const size = 8 << 20 // 8 MiB logical, data only at the ends
+	const size = 8 << 20
 
 	f, err := os.Create(src)
 	require.NoError(t, err)
@@ -77,16 +77,17 @@ func TestFastPathsFallBackOnPipe(t *testing.T) {
 }
 
 // TestCopyFileRangeCancelBetweenChunks shrinks the per-call cap so a small file
-// takes several copy_file_range calls, then cancels after the first: the copy
-// must stop at the next chunk boundary with ErrCanceled instead of finishing.
+// takes several copy_file_range calls, then cancels after the earliest: the
+// copy must stop at the next chunk boundary with ErrCanceled instead of finishing.
 func TestCopyFileRangeCancelBetweenChunks(t *testing.T) {
+	t.Serial()
 	old := copyChunk
 	copyChunk = 64 << 10
 	defer func() { copyChunk = old }()
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.bin")
-	const size = 256 << 10 // 4 chunks at the shrunken cap
+	const size = 256 << 10
 	require.NoError(t, os.WriteFile(src, make([]byte, size), 0o644))
 	in, err := os.Open(src)
 	require.NoError(t, err)

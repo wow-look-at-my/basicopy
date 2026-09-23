@@ -50,7 +50,13 @@ func (g *gate) saturated() bool {
 	return g.inUse >= g.limit
 }
 
-// setLimit changes the number of concurrent holders allowed, clamped to [1,max].
+// current returns the live limit W.
+func (g *gate) current() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.limit
+}
+
 // The auto-scaling controller calls this every tick.
 func (g *gate) setLimit(n int) {
 	g.mu.Lock()

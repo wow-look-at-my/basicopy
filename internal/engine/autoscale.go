@@ -114,7 +114,6 @@ func (r *runner) probeDevice(path string) device.Info {
 // connReporter says, under --verbose, when a host's pool grew; W decides the size.
 type connReporter struct{ reported map[string]int }
 
-// The first connection is not news: every remote copy has one.
 func newConnReporter() *connReporter { return &connReporter{reported: map[string]int{}} }
 
 func (c *connReporter) seen(host string) int {
@@ -138,8 +137,6 @@ func (c *connReporter) tick(r *runner, remotes []vfs.FS) {
 	}
 }
 
-// sampleUtil returns the max %util across the destination and source samplers, or
-// -1 if neither produced a reading this tick.
 func sampleUtil(dst, src *device.UtilSampler) float64 {
 	util := -1.0
 	if dst != nil {

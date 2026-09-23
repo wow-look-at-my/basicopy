@@ -7,12 +7,10 @@
 // returned W to the gate.
 //
 // Design (see the plan): the *throughput plateau* is the primary signal because
-// it is the only one present in every bottleneck — disk, bus/link, or CPU-bound
-// security software all manifest as "more workers stop raising throughput". The
-// controller climbs W while smoothed throughput keeps rising, then converges to
-// the minimum W that sustains the plateau (so a saturated USB bus isn't served by
-// 64 idle-ish streams). System-CPU and HDD %util act only as guards that forbid
-// growing — they never override a clear plateau.
+// it is the a single present in every bottleneck — disk, bus/link, or CPU-bound
+// security software all manifest as "more workers stop raising throughput".
+// System-CPU and HDD %util act only as guards that forbid growing — they never
+// override a clear plateau.
 package control
 
 type phase int
@@ -23,15 +21,15 @@ const (
 	trimming
 )
 
-// Sample is one observation at a control tick. Unknown guard signals are encoded
-// as negative values so they are simply ignored.
+// Sample is a single observation at a control tick. Unknown guard signals are
+// encoded as negative values so they are simply ignored.
 type Sample struct {
 	Throughput float64 // bytes/sec observed since the last tick
-	SysCPU     float64 // system-wide CPU busy fraction [0,1]; <0 if unknown
-	DevUtil    float64 // device %util [0,100]; <0 if unknown
-	Rotational bool    // is a rotational (HDD) device involved?
+	SysCPU     float64
+	DevUtil    float64
+	Rotational bool // is a rotational (HDD) device involved?
 
-	// Blocked reports every stream busy with zero throughput: storage, not W, is the limit.
+	// Blocked reports every stream busy with empty throughput: storage, not W, is the limit.
 	Blocked bool
 }
 
@@ -98,8 +96,6 @@ func (c *Controller) canGrow(s Sample) bool {
 	return true
 }
 
-// grow returns the next (larger) W using ~1.5x multiplicative growth so the loop
-// converges quickly even when the answer is large.
 func (c *Controller) grow() int {
 	n := c.w + c.w/2
 	if n <= c.w {
@@ -111,7 +107,7 @@ func (c *Controller) grow() int {
 	return n
 }
 
-// Update folds in one Sample and returns the (possibly changed) worker limit.
+// Update folds in a single Sample and returns the (possibly changed) worker limit.
 func (c *Controller) Update(s Sample) int {
 	if !c.emaSet {
 		c.ema = s.Throughput
@@ -126,7 +122,7 @@ func (c *Controller) Update(s Sample) int {
 		return c.w
 	}
 
-	// Handle first: the plateau test below misreads a stall as "no gain" and reverts W forever.
+	// Handle earliest: the plateau test below misreads a stall as "no gain" and reverts W forever.
 	if s.Blocked {
 		if c.canGrow(s) && c.w < c.max {
 			c.prevW = c.w

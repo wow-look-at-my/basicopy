@@ -18,8 +18,8 @@ import (
 // lacks (inode identity, st_dev, xattrs) report unavailable.
 //
 // Each concurrent transfer gets its own connection, up to MaxConnections: a
-// server answers one request at a time, so transfers sharing a connection queue
-// instead of running in parallel. Pool width tracks the worker controller's W.
+// server answers a single request at a time, so transfers sharing a connection
+// queue instead of running in parallel. Pool width tracks the worker controller's W.
 type remoteFS struct {
 	host   string // "[user@]host" for messages
 	prefix string // "[user@]host:" path prefix for output
@@ -29,7 +29,7 @@ type remoteFS struct {
 	free    *sync.Cond // woken when a transfer ends or a connection arrives
 	conns   []*conn
 	dialing bool // a dial is in flight
-	frozen  bool // dialing failed once; never retried
+	frozen  bool // dialing failed a single time;
 	closed  bool // the FS has been closed; no more dialing
 
 	rr atomic.Uint64
@@ -289,7 +289,7 @@ func (f *remoteFS) Owner(fi os.FileInfo) (uid, gid int, ok bool) {
 // FileID reports no identity: SFTP has no inode number, so remote hardlinks copy as independent files.
 func (f *remoteFS) FileID(fi os.FileInfo) (string, uint64, bool) { return "", 0, false }
 
-// Dev reports no device number, so --one-file-system can't detect a remote mount point.
+// Dev reports no device number, so --a single file-system can't detect a remote mount point.
 func (f *remoteFS) Dev(fi os.FileInfo) (uint64, bool) { return 0, false }
 
 func (f *remoteFS) SameFile(a, b os.FileInfo) bool { return false }

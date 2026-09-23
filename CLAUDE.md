@@ -103,6 +103,9 @@ behind small functions; `control`, `engine`, and `options` are platform-agnostic
   at a time, so transfers sharing a connection run in sequence on the far side.
   `vfs.remoteFS` dials on demand (cap 16, first connection reserved for
   metadata); restraint comes from `W`, which is already measured. `docs/ssh.md`.
+- **`--move`** (`engine/move.go`): one rename per root when the target name is
+  free on the same host, else copy and record each finished source entry. The
+  removal pass runs after `--mirror`, which reads the source.
 - **A stall means grow, not stop.** `control.Sample.Blocked` (every worker busy,
   nothing finished) makes the controller grow `W`: at zero throughput the plateau
   test "the last increase didn't help" is true at every `W`, which used to pin

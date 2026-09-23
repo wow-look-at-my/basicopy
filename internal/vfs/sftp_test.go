@@ -188,9 +188,9 @@ func TestRemoteAvail(t *testing.T) {
 	assert.False(t, ok, "an unreadable path disables the guard rather than failing the run")
 }
 
-// TestPoolGrowsWithConcurrentTransfers is the property the copy depends on: a
-// second transfer must not be made to queue behind the first on one connection,
-// because the far side would run them in sequence.
+// TestPoolGrowsWithConcurrentTransfers is the property the copy depends on:
+// another transfer must not be made to queue behind the earliest on a single
+// connection, because the far side would run them in sequence.
 func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	fsys := testFS(t)
 	pooled, ok := fsys.(Pooled)
@@ -204,11 +204,11 @@ func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	path := filepath.Join(dir, "f.txt")
 	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
 
-	// Hold one transfer open; the second must get its own connection, not share.
+	// Hold a single transfer open; the next must get its own connection, not share.
 	first, err := fsys.Open(path)
 	require.NoError(t, err)
 	rf := fsys.(*remoteFS)
-	rf.conns[0].inflight.Add(1) // pretend the far side has not answered yet
+	rf.conns[0].inflight.Add(1)
 
 	second, err := fsys.Open(path)
 	require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	require.NoError(t, first.Close())
 	require.NoError(t, second.Close())
 
-	// With both transfers finished, the next one reuses a free connection.
+	// With both transfers finished, the next a single reuses a free connection.
 	third, err := fsys.Open(path)
 	require.NoError(t, err)
 	open, _ = pooled.Pool()
@@ -230,7 +230,7 @@ func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 }
 
 // TestPoolStopsAtMaxConnections: transfers share connections rather than wait
-// forever once the ceiling is reached.
+// forever a single time the ceiling is reached.
 func TestPoolStopsAtMaxConnections(t *testing.T) {
 	fsys := testFS(t)
 	rf := fsys.(*remoteFS)
@@ -243,7 +243,6 @@ func TestPoolStopsAtMaxConnections(t *testing.T) {
 		f, err := fsys.Open(path)
 		require.NoError(t, err)
 		files = append(files, f)
-		// Every connection looks busy, so each new transfer wants a new one.
 		rf.mu.Lock()
 		for _, c := range rf.conns {
 			c.inflight.Store(1)
@@ -263,9 +262,9 @@ func TestPoolStopsAtMaxConnections(t *testing.T) {
 	}
 }
 
-// TestFirstConnectionStaysClearForMetadata: once the pool has grown, directory
-// listings and stats must not queue behind a file that takes a minute to read,
-// or the walk stops feeding the workers.
+// TestFirstConnectionStaysClearForMetadata: a single time the pool has grown,
+// directory listings and stats must not queue behind a file that takes a
+// minute to read, or the walk stops feeding the workers.
 func TestFirstConnectionStaysClearForMetadata(t *testing.T) {
 	fsys := testFS(t)
 	rf := fsys.(*remoteFS)
@@ -306,6 +305,7 @@ func TestUnsupportedRecognisesSFTPStatus(t *testing.T) {
 }
 
 func TestRegistryReusesConnections(t *testing.T) {
+	t.Serial()
 	old := StartTransport
 	StartTransport = pipeTransport
 	defer func() { StartTransport = old }()
