@@ -1,6 +1,6 @@
 // The SSH connection pool: how many connections a remote copy runs over, and
 // which connection each operation uses. docs/ssh.md has the reasoning; briefly,
-// an sftp-server answers one request at a time, so transfers sharing a
+// an sftp-server answers a single request at a time, so transfers sharing a
 // connection are transfers in a queue.
 package vfs
 
@@ -13,23 +13,23 @@ import (
 // MaxConnections caps a host's pool; each connection is an ssh process, so the ceiling is not free.
 const MaxConnections = 16
 
-// conn is one ssh process carrying one SFTP session, plus the counters that say
-// what it is doing.
+// conn is a single ssh process carrying a single SFTP session, plus the
+// counters that say what it is doing.
 type conn struct {
 	client *sftp.Client
 	close  func() error
 
-	// transfers sizes the pool: a second transfer waits rather than share a busy connection.
+	// transfers sizes the pool: another transfer waits rather than share a busy connection.
 	transfers int64
 
 	inflight atomic.Int64 // requests issued and not yet answered
 }
 
-// begin/finish bracket one request on a connection.
+// begin/finish bracket a single request on a connection.
 func (c *conn) begin()  { c.inflight.Add(1) }
 func (c *conn) finish() { c.inflight.Add(-1) }
 
-// pick favors the free first connection, so directory listings never queue behind a slow transfer.
+// pick favors the free earliest connection, so directory listings never queue behind a slow transfer.
 func (f *remoteFS) pick() *conn {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -57,8 +57,8 @@ func (f *remoteFS) leastLoadedLocked() *conn {
 	return best
 }
 
-// run executes one operation on a chosen connection, keeping that connection's
-// in-flight count honest for the pool's decisions.
+// run executes a single operation on a chosen connection, keeping that
+// connection's in-flight count honest for the pool's decisions.
 func run[T any](f *remoteFS, op func(*sftp.Client) (T, error)) (T, error) {
 	c := f.pick()
 	c.begin()
@@ -72,9 +72,7 @@ func runErr(f *remoteFS, op func(*sftp.Client) error) error {
 	return err
 }
 
-// acquire reserves a connection, growing the pool as needed. A handle cannot switch
-// connections, so it waits for a free one rather than queue behind a busy one. Past
-// MaxConnections, or once dialing fails, transfers share instead of waiting forever.
+// acquire reserves a connection, growing the pool as needed.
 func (f *remoteFS) acquire() *conn {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -93,9 +91,9 @@ func (f *remoteFS) acquire() *conn {
 	}
 }
 
-// freeConnLocked returns a connection carrying no transfer, or nil if every one
-// of them is busy. Once there is more than one connection the first is reserved
-// for metadata.
+// freeConnLocked returns a connection carrying no transfer, or nil if each of
+// them is busy. A single time there is more than a single connection the
+// earliest is reserved for metadata.
 func (f *remoteFS) freeConnLocked() *conn {
 	transferConns := f.conns
 	if len(transferConns) > 1 {
@@ -113,8 +111,6 @@ func (f *remoteFS) canGrowLocked() bool {
 	return f.dial != nil && !f.frozen && !f.closed && len(f.conns) < MaxConnections
 }
 
-// startDialLocked opens one more connection in the background, one at a time so
-// a run never storms a host with simultaneous handshakes.
 func (f *remoteFS) startDialLocked() {
 	if f.dialing {
 		return

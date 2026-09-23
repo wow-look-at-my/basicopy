@@ -13,12 +13,11 @@ import (
 // copyData copies info.Size() bytes from src to dst using the fastest correct
 // method available, in order of preference:
 //
-//  1. FICLONE whole-file reflink — instant, shares extents (same-fs CoW: btrfs,
+//  FICLONE whole-file reflink — instant, shares extents (same-fs CoW: btrfs,
 //     XFS-reflink, bcachefs). Independent inode/metadata; just storage-shared.
-//  2. Sparse-aware copy (SEEK_DATA/SEEK_HOLE) — preserves holes for sparse files.
-//  3. copy_file_range — in-kernel copy (and NFS server-side copy), no userspace
-//     bounce buffer.
-//  4. Buffered read/write — the universal fallback.
+//     Sparse-aware copy (SEEK_DATA/SEEK_HOLE) — preserves holes for sparse files.
+//     copy_file_range — in-kernel copy (and NFS server-side copy), no userspace
+//     bounce buffer. Buffered read/write — the universal fallback.
 func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error) {
 	if info == nil {
 		return plainCopy(dst, src, o)
@@ -60,7 +59,7 @@ func isSparse(info os.FileInfo) bool {
 }
 
 // copyChunk bounds each copy_file_range call, against overflow and slow progress/cancel checks.
-var copyChunk = int64(128 << 20) // 128 MiB
+var copyChunk = int64(128 << 20)
 
 // copyFileRange copies up to size bytes via copy_file_range. ok=false means the
 // call is unsupported for this pair (cross-fs, old kernel, special file) and the

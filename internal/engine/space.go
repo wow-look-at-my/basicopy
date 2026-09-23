@@ -9,11 +9,9 @@ import (
 // availBytes reports free space; a package var lets tests simulate a full destination.
 var availBytes = func(fsys vfs.FS, dir string) (int64, bool) { return fsys.Avail(dir) }
 
-// initSpaceGuard records the destination's free space, so a later write can be
-// refused before an ENOSPC failure instead of after one.
 func (r *runner) initSpaceGuard(dir string) {
 	if r.opts.DryRun || r.spaceCheck {
-		return // dry runs don't write; and seed only once across multiple sources
+		return // dry runs don't write; and seed a single time across multiple
 	}
 	if avail, ok := availBytes(r.dfs, dir); ok {
 		r.freeBytes.Store(avail)

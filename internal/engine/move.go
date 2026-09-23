@@ -27,9 +27,9 @@ func (r *runner) transferVerb() string {
 	return "copy"
 }
 
-// renameRoot moves a whole source root with one rename. It returns false when
-// the caller must copy instead. A failed rename (EXDEV, a non-empty target
-// directory) is not an error: the copy path then does the move.
+// renameRoot moves a whole source root with a single rename. It returns false
+// when the caller must copy instead. A failed rename (EXDEV, a non-empty
+// target directory) is not an error: the copy path then does the move.
 func (r *runner) renameRoot(sfs vfs.FS, src, dst string, fi os.FileInfo) bool {
 	o := r.opts
 	if !o.Move || o.DryRun || !vfs.SameHost(sfs, r.dfs) {
@@ -45,7 +45,6 @@ func (r *runner) renameRoot(sfs vfs.FS, src, dst string, fi os.FileInfo) bool {
 	case err != nil:
 		return false
 	case fi.IsDir() || di.IsDir():
-		// A rename replaces only an empty directory; the copy path merges into a full one.
 		return false
 	case r.dfs.SameFile(fi, di):
 		return false
@@ -89,7 +88,7 @@ func (r *runner) moveDir(root *srcRoot, src, dst string) {
 }
 
 // removeMovedSources deletes every recorded source entry: files in parallel at
-// the measured worker limit, then directories deepest first.
+// the measured worker limit, then directories deepest earliest.
 func (r *runner) removeMovedSources(ctx context.Context) {
 	jobs := make(chan movedEntry)
 	var wg sync.WaitGroup
@@ -118,8 +117,8 @@ func (r *runner) removeMovedSources(ctx context.Context) {
 	}
 }
 
-// removeSource deletes one source entry. A directory that still has entries
-// (excluded, failed, or a skipped special file) stays without an error.
+// removeSource deletes a single source entry. A directory that still has
+// entries (excluded, failed, or a skipped special file) stays without an error.
 func (r *runner) removeSource(e movedEntry, dir bool) {
 	if r.sameEntry(e) {
 		r.fail(fmt.Errorf("not removing %s: it is the destination %s", e.srcFS.Display(e.src), r.dfs.Display(e.dst)))

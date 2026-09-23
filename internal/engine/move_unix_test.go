@@ -13,7 +13,7 @@ import (
 )
 
 // An exclude that matches nothing turns off the whole-root rename, so these
-// tests exercise the copy-then-remove path on one local filesystem.
+// tests exercise the copy-then-remove path on a single local filesystem.
 var forceCopyPath = []string{"no-such-entry"}
 
 func TestMoveCopyPathKeepsHardlinks(t *testing.T) {
@@ -31,7 +31,7 @@ func TestMoveCopyPathKeepsHardlinks(t *testing.T) {
 }
 
 // A move takes symlinks as links, even without --no-follow-symlinks. Following an
-// in-tree link would put its target at the destination twice.
+// in-tree link would put its target at the destination again.
 func TestMoveTakesSymlinksAsLinks(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

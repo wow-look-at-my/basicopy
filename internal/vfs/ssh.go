@@ -11,8 +11,8 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// Transport is one live channel to a host's SFTP subsystem: the pipes the
-// client talks over, plus a shutdown func.
+// Transport is a single live channel to a host's SFTP subsystem: the
+// pipes the client talks over, plus a shutdown func.
 type Transport struct {
 	Stdout io.Reader
 	Stdin  io.WriteCloser
@@ -24,8 +24,8 @@ var StartTransport = startSSH
 
 // sshArgs builds the ssh command line. extra marks a pool-widening connection:
 // BatchMode=yes stops it from prompting for a credential (the dial just fails
-// instead), and ConnectTimeout bounds it against an unreachable host. The first
-// connection is the user's own interactive ssh session and gets neither.
+// instead), and ConnectTimeout bounds it against an unreachable host. The
+// earliest connection is the user's own interactive ssh session and gets neither.
 func sshArgs(loc Location, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
@@ -84,7 +84,7 @@ var clientOptions = []sftp.ClientOption{
 	sftp.UseConcurrentWrites(true),
 }
 
-// dialConn opens one ssh connection and starts an SFTP session on it.
+// dialConn opens a single ssh connection and starts an SFTP session on it.
 func dialConn(loc Location, extra bool) (*conn, error) {
 	t, err := StartTransport(loc, extra)
 	if err != nil {
@@ -120,8 +120,8 @@ func hostLabel(loc Location) string {
 	return loc.Host
 }
 
-// Registry hands out one FS per host and keeps it alive for the whole run, so
-// several sources on the same machine share one connection pool.
+// Registry hands out a single FS per host and keeps it alive for the whole
+// run, so several sources on the same machine share a single connection pool.
 type Registry struct {
 	mu    sync.Mutex
 	conns map[string]FS
@@ -132,9 +132,9 @@ func NewRegistry() *Registry {
 	return &Registry{conns: map[string]FS{}}
 }
 
-// Resolve parses one command-line path and returns the filesystem it lives on
-// together with the path within that filesystem. Remote hosts are dialed on
-// first use.
+// Resolve parses a single command-line path and returns the filesystem it
+// lives on together with the path within that filesystem. Remote hosts are
+// dialed on earliest use.
 func (r *Registry) Resolve(arg string) (FS, string, error) {
 	loc, err := Parse(arg)
 	if err != nil {

@@ -28,10 +28,7 @@ func captureRun(t *testing.T, o *options.Options) (*Summary, string, string) {
 	return sum, out.String(), errOut.String()
 }
 
-// TestDryRunItemizesByDefault: a dry run must print one reasoned line per
-// pending change on stdout WITHOUT any verbosity flag -- that is the whole
-// point of a dry run (rsync's silent bare --dry-run is the failure mode this
-// avoids). Unchanged files stay silent unless --verbose.
+// Unchanged files stay silent unless --verbose.
 func TestDryRunItemizesByDefault(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
@@ -182,9 +179,6 @@ func TestAttrUpdateRespectsNoPreserve(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
 }
 
-// TestChecksumMtimeTouchup: under --checksum a content-identical file with a
-// drifted mtime gets a time touch-up instead of a pointless recopy -- itemized
-// in a dry run, applied via Chtimes in a real one.
 func TestChecksumMtimeTouchup(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

@@ -9,7 +9,6 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
 
-// run drives a copy from validated options and reports a one-line summary.
 func run(cmd *cobra.Command, o *options.Options) error {
 	sum, err := engine.Run(cmd.Context(), o)
 	if err != nil {

@@ -57,7 +57,6 @@ func (g *gate) current() int {
 	return g.limit
 }
 
-// setLimit changes the number of concurrent holders allowed, clamped to [1,max].
 // The auto-scaling controller calls this every tick.
 func (g *gate) setLimit(n int) {
 	g.mu.Lock()

@@ -12,7 +12,6 @@ import (
 )
 
 func TestParseIOTicks(t *testing.T) {
-	// major minor name | reads(4) | writes(4) | inflight ioticks weighted
 	data := "   7       0 loop0 0 0 0 0 0 0 0 0 0 0 0\n" +
 		" 254       0 vda 16816 0 475882 17536 12609 0 304048 3488 0 1060 21243\n" +
 		" 254      16 vdb 15886 0 125650 3945 0 0 0 0 0 76 3945\n"

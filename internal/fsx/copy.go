@@ -17,13 +17,13 @@ import (
 )
 
 // DefaultBufSize is the fallback buffer size when no device-adaptive size is chosen.
-const DefaultBufSize = 1 << 20 // 1 MiB
+const DefaultBufSize = 1 << 20
 
 // CopyOptions controls a single file copy.
 type CopyOptions struct {
 	Preserve bool // preserve mode/times/owner (and later xattr/ACL).
 	Fsync    bool // fsync the temp file before the atomic rename.
-	BufSize  int  // copy buffer size; <= 0 uses DefaultBufSize.
+	BufSize  int
 
 	// Progress, if set, is called with bytes newly written; may fire often and concurrently.
 	Progress func(n int64)
@@ -141,9 +141,7 @@ func getBuf(size int) *[]byte {
 func putBuf(b *[]byte) { bufPool.Put(b) }
 
 // plainCopy streams src to dst in o.BufSize chunks; used for remote ends and as
-// the portable fallback. An explicit loop, not io.CopyBuffer: io.CopyBuffer
-// would delegate to *os.File's ReaderFrom and ignore BufSize (via its own fixed
-// 32 KiB buffer), and it has no hook for progress or cancellation.
+// the portable fallback.
 func plainCopy(dst io.Writer, src io.Reader, o CopyOptions) (int64, error) {
 	bufSize := o.BufSize
 	if bufSize <= 0 {

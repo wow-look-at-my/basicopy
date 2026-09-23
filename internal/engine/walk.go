@@ -234,7 +234,7 @@ func (r *runner) visitSymlink(ctx context.Context, root *srcRoot, srcPath, dstPa
 		r.fail(err)
 		return
 	}
-	// A move takes the link itself, as mv does; following it would leave the target at the destination twice.
+	// A move takes the link itself, as mv does; following it would leave the target at the destination again.
 	if r.opts.NoFollowSymlinks || r.opts.Move {
 		r.recreateSymlink(root, srcPath, target, dstPath, fi)
 		return
@@ -400,9 +400,9 @@ func (r *runner) excluded(root *srcRoot, srcPath string, isDir bool) bool {
 	return false
 }
 
-// matchEntry applies one --exclude/--include pattern. A trailing '/' (rsync's
-// 'node_modules/' syntax) matches directories only; the slash is stripped
-// before the glob match.
+// matchEntry applies a single exclude/--include pattern. A trailing '/'
+// (rsync's 'node_modules/' syntax) matches directories only; the slash is
+// stripped before the glob match.
 func matchEntry(fsys vfs.FS, pattern, rel, base string, isDir bool) bool {
 	if trimmed := strings.TrimRight(pattern, "/"); trimmed != pattern {
 		if !isDir || trimmed == "" {

@@ -27,7 +27,7 @@ func run(c *Controller, cv curve, guard func(*Sample), n int) []int {
 	ws := make([]int, 0, n)
 	w := c.W()
 	for i := 0; i < n; i++ {
-		noise := 1 + 0.02*math.Sin(float64(i)*1.3) // deterministic +-2%
+		noise := 1 + 0.02*math.Sin(float64(i)*1.3)
 		s := Sample{Throughput: cv.at(w) * noise, SysCPU: -1, DevUtil: -1}
 		if guard != nil {
 			guard(&s)
@@ -107,7 +107,7 @@ func TestLowKneeSettlesLowerThanHighKnee(t *testing.T) {
 	assert.Less(t, wlo, whi, "a workload that saturates sooner should settle at a lower W")
 }
 
-// TestBlockedSampleGrowsW: zero throughput plus Blocked must grow W, not revert it.
+// TestBlockedSampleGrowsW: empty throughput plus Blocked must grow W, not revert it.
 func TestBlockedSampleGrowsW(t *testing.T) {
 	c := New(1, 32, 1)
 	for i := 0; i < 40; i++ {
@@ -116,7 +116,7 @@ func TestBlockedSampleGrowsW(t *testing.T) {
 	assert.Equal(t, 32, c.W(), "a stalled copy must keep widening; nothing else overlaps the waiting")
 }
 
-// TestBlockedSampleWithoutTheFlagStalls is the control case: the same zero
+// TestBlockedSampleWithoutTheFlagStalls is the control case: the same empty
 // throughput, not reported as blocked, must NOT grow -- that is the ordinary
 // "this is as fast as it gets" reading, and it is why the flag has to exist.
 func TestBlockedSampleWithoutTheFlagStalls(t *testing.T) {
@@ -137,8 +137,8 @@ func TestBlockedGrowthRespectsGuards(t *testing.T) {
 	assert.Equal(t, 4, c.W(), "a saturated CPU still forbids growth")
 }
 
-// TestBlockedThenFlowingTrimsBack: once bytes move again the ordinary loop takes
-// over from wherever the stall left W, including trimming excess away.
+// TestBlockedThenFlowingTrimsBack: a single time bytes move again the ordinary
+// loop takes over from wherever the stall left W, including trimming excess away.
 func TestBlockedThenFlowingTrimsBack(t *testing.T) {
 	c := New(1, 32, 1)
 	for i := 0; i < 20; i++ {

@@ -234,10 +234,10 @@ func TestSkipUnchangedOnRerun(t *testing.T) {
 	assert.EqualValues(t, 2, sum2.Skipped, "re-run should skip both unchanged files")
 }
 
-// TestCanceledCopyIsNotAFailure: once the run is aborting, an in-flight copy
-// interrupted via the Cancel hook must stop without being recorded as a
-// per-file failure (the abort itself is the run's error) and without
-// publishing a destination file.
+// TestCanceledCopyIsNotAFailure: a single time the run is aborting, an
+// in-flight copy interrupted via the Cancel hook must stop without being
+// recorded as a per-file failure (the abort itself is the run's error) and
+// without publishing a destination file.
 func TestCanceledCopyIsNotAFailure(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src.bin")
@@ -345,7 +345,7 @@ func TestReserveSpaceDisabled(t *testing.T) {
 
 func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
 	old := availBytes
-	availBytes = func(vfs.FS, string) (int64, bool) { return 100, true } // only 100 bytes free
+	availBytes = func(vfs.FS, string) (int64, bool) { return 100, true }
 	defer func() { availBytes = old }()
 
 	r := &runner{opts: &options.Options{}, stderr: &bytes.Buffer{}, spaceCheck: true, dfs: vfs.Local}
@@ -356,7 +356,7 @@ func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
 
 func TestReserveSpaceConfirmsRoomViaStatfs(t *testing.T) {
 	old := availBytes
-	availBytes = func(vfs.FS, string) (int64, bool) { return 1 << 30, true } // 1 GiB really free
+	availBytes = func(vfs.FS, string) (int64, bool) { return 1 << 30, true }
 	defer func() { availBytes = old }()
 
 	r := &runner{opts: &options.Options{}, spaceCheck: true, dfs: vfs.Local}

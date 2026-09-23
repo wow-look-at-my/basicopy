@@ -65,7 +65,7 @@ func TestMoveMergesIntoExistingTarget(t *testing.T) {
 	writeFile(t, filepath.Join(src, "sub", "same.txt"), []byte("stable"), 0o644)
 	require.NoError(t, os.MkdirAll(filepath.Join(dst, "src", "sub"), 0o755))
 
-	// The first run is a plain copy, which makes same.txt unchanged for the move.
+	// The earliest run is a plain copy, which makes same.txt unchanged for the move.
 	captureRun(t, &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "never"})
 	writeFile(t, filepath.Join(src, "new.txt"), []byte("fresher"), 0o644)
 
@@ -210,7 +210,7 @@ func TestMoveFromRemoteRemovesSource(t *testing.T) {
 	assert.Equal(t, "beta", readString(t, filepath.Join(dst, "src", "sub", "b.txt")))
 }
 
-// Both ends on one remote host: the far side does the rename, no bytes cross the wire.
+// Both ends on a single remote host: the far side does the rename, no bytes cross the wire.
 func TestMoveRenamesOnRemoteHost(t *testing.T) {
 	fakeRemote(t)
 	root := t.TempDir()

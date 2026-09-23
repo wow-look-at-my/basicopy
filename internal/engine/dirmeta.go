@@ -72,8 +72,8 @@ func (r *runner) closeDir(d *dirState) {
 	}
 }
 
-// queueDirMeta fires once this directory can no longer gain children from
-// copies or deferred hardlinks.
+// queueDirMeta fires a single time this directory can no longer gain
+// children from copies or deferred hardlinks.
 func (r *runner) queueDirMeta(d *dirState) {
 	if d.queued.CompareAndSwap(false, true) {
 		r.metaJobs <- d
