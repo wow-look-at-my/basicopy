@@ -27,7 +27,7 @@ type Sample struct {
 	Throughput float64 // bytes/sec observed since the last tick
 	SysCPU     float64
 	DevUtil    float64
-	Rotational bool    // is a rotational (HDD) device involved?
+	Rotational bool // is a rotational (HDD) device involved?
 
 	// Blocked reports every stream busy with empty throughput: storage, not W, is the limit.
 	Blocked bool

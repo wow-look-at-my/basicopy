@@ -177,10 +177,10 @@ type runner struct {
 	renamed, removed                                                        atomic.Int64
 
 	// --move: source entries to remove a single time the run is done; movedDirs is walk-goroutine-owned.
-	moveMu     sync.Mutex
-	movedFiles []movedEntry
-	movedDirs  []movedEntry
-	dirMetaTotal, dirMetaDone                                               atomic.Int64
+	moveMu                    sync.Mutex
+	movedFiles                []movedEntry
+	movedDirs                 []movedEntry
+	dirMetaTotal, dirMetaDone atomic.Int64
 
 	// moved is a monotonic live-progress counter, distinct from bytes (the completed-copy total used for the summary).
 	moved atomic.Int64

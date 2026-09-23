@@ -42,7 +42,7 @@ type Options struct {
 	NoFollowSymlinks  bool // copy symlinks as links instead of dereferencing them.
 	NoSymlinkWarnings bool // suppress the stderr notice for out-of-tree symlinks.
 	NoPreserve        bool // don't preserve metadata (mode/times/owner/xattr/Linux ACL).
-	FatalErrors       bool // abort on the earliest error instead of
+	FatalErrors       bool
 	Fsync             bool // fsync each file before the atomic rename (durability).
 
 	// Output.
