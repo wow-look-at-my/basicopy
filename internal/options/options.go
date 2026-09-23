@@ -37,6 +37,7 @@ type Options struct {
 	// Behavior.
 	DryRun            bool
 	Mirror            bool // delete extraneous files in the target (destructive).
+	Move              bool // remove each source entry once the destination holds it.
 	Checksum          bool // compare by BLAKE3 content hash, not size+mtime.
 	NoHardlinks       bool // duplicate hardlinked files instead of preserving links.
 	NoFollowSymlinks  bool // copy symlinks as links instead of dereferencing them.

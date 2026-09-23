@@ -74,6 +74,7 @@ func init() {
 	// Behavior.
 	f.BoolVar(&opts.DryRun, "dry-run", false, "plan only; copy nothing")
 	f.BoolVar(&opts.Mirror, "mirror", false, "delete files in the target not present in SRC (destructive)")
+	f.BoolVar(&opts.Move, "move", false, "move instead of copy: rename on the same filesystem, else remove each source entry once it is at the target")
 	f.BoolVarP(&opts.Checksum, "checksum", "c", false, "compare by BLAKE3 content hash, not size+mtime")
 	f.BoolVar(&opts.NoHardlinks, "no-hardlinks", false, "duplicate hardlinked files instead of preserving links")
 	f.BoolVar(&opts.NoFollowSymlinks, "no-follow-symlinks", false, "copy symlinks as links instead of dereferencing them")

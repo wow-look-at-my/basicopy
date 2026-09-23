@@ -18,6 +18,8 @@ type hlPrimary struct {
 type linkEnt struct {
 	target, dst string
 	parent      *dirState
+	srcFS       vfs.FS
+	src         string
 }
 
 // handleRegular preserves hardlinks (default-on): the first path to a multiply-
@@ -40,7 +42,7 @@ func (r *runner) handleRegular(root *srcRoot, srcPath, dstPath string, fi os.Fil
 		// A dry run has no worker pool; decide skip-vs-copy right here.
 		v := scan.Compare(root.fs, srcPath, fi, r.dfs, dstPath, r.opts.Checksum)
 		if !v.NeedCopy {
-			r.finishUnchangedFile(root.fs, dstPath, fi, v)
+			r.finishUnchangedFile(root.fs, srcPath, dstPath, fi, v)
 			return
 		}
 		r.enqueueFile(root, srcPath, dstPath, fi, parent, false, v.Reason)
@@ -76,16 +78,17 @@ func (r *runner) handleMultiLink(root *srcRoot, srcPath, dstPath string, fi os.F
 		if p.adopted && r.sameDestFile(p.dst, dstPath) {
 			r.skipped.Add(1)
 			r.verbose("skip unchanged %s", r.dfs.Display(dstPath))
+			r.moveUnchanged(root.fs, srcPath, dstPath)
 			return
 		}
 		r.addDirWork(parent)
-		r.hardlinks = append(r.hardlinks, linkEnt{target: p.dst, dst: dstPath, parent: parent})
+		r.hardlinks = append(r.hardlinks, linkEnt{target: p.dst, dst: dstPath, parent: parent, srcFS: root.fs, src: srcPath})
 		return
 	}
 	v := scan.Compare(root.fs, srcPath, fi, r.dfs, dstPath, r.opts.Checksum)
 	if !v.NeedCopy {
 		r.hardlinkMap[key] = hlPrimary{dst: dstPath, adopted: true}
-		r.finishUnchangedFile(root.fs, dstPath, fi, v)
+		r.finishUnchangedFile(root.fs, srcPath, dstPath, fi, v)
 		return
 	}
 	r.hardlinkMap[key] = hlPrimary{dst: dstPath}
@@ -123,6 +126,7 @@ func (r *runner) applyHardlinks() {
 		}
 		r.linked.Add(1)
 		r.item("%s => %s (hardlink)", r.dfs.Display(l.dst), r.dfs.Display(l.target))
+		r.moveSource(l.srcFS, l.src, l.dst)
 		r.completeDirWork(l.parent)
 	}
 }

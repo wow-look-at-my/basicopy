@@ -38,6 +38,8 @@ type Summary struct {
 	Linked   int64 `json:"hardlinks"` // hardlinks preserved
 	Updated  int64 `json:"updated"`   // attribute-only touch-ups on otherwise unchanged entries
 	Deleted  int64 `json:"deleted"`   // extraneous destination entries removed (--mirror)
+	Renamed  int64 `json:"renamed"`   // source roots moved by one rename (--move)
+	Removed  int64 `json:"removed"`   // source entries removed after their transfer (--move)
 	Bytes    int64 `json:"bytes"`
 	Skipped  int64 `json:"skipped"`
 	Failed   int64 `json:"failed"`
@@ -122,6 +124,9 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	if opts.Mirror {
 		r.mirrorExtraneous()
 	}
+	if opts.Move && !opts.DryRun && ctx.Err() == nil {
+		r.removeMovedSources(ctx)
+	}
 	if !opts.DryRun {
 		close(stopBg)
 		r.bgWg.Wait()
@@ -170,6 +175,12 @@ type runner struct {
 	startedAt time.Time
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
+	renamed, removed                                                        atomic.Int64
+
+	// --move: source entries to remove once the run is done; movedDirs is walk-goroutine-owned.
+	moveMu     sync.Mutex
+	movedFiles []movedEntry
+	movedDirs  []movedEntry
 	dirMetaTotal, dirMetaDone                                               atomic.Int64
 
 	// moved is a monotonic live-progress counter, distinct from bytes (the completed-copy total used for the summary).
@@ -285,7 +296,7 @@ func (r *runner) copyOne(job fileJob) {
 			// These bytes will never move: undo the discovery accounting.
 			r.totalFiles.Add(-1)
 			r.totalBytes.Add(-job.info.Size())
-			r.finishUnchangedFile(job.srcFS, job.dst, job.info, v)
+			r.finishUnchangedFile(job.srcFS, job.src, job.dst, job.info, v)
 			return
 		}
 		reason = v.Reason
@@ -313,7 +324,8 @@ func (r *runner) copyOne(job fileJob) {
 	}
 	r.files.Add(1)
 	r.bytes.Add(n)
-	r.item("copy %s (%s)", r.dfs.Display(job.dst), reason)
+	r.item("%s %s (%s)", r.transferVerb(), r.dfs.Display(job.dst), reason)
+	r.moveSource(job.srcFS, job.src, job.dst)
 }
 
 // finishUnchangedFile finalizes a destination file whose content is already up
@@ -322,7 +334,8 @@ func (r *runner) copyOne(job fileJob) {
 // counts as updated; otherwise it is a plain skip. Attribute application is
 // best-effort, matching the directory-metadata policy (a warning, not a
 // failure).
-func (r *runner) finishUnchangedFile(srcFS vfs.FS, dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
+func (r *runner) finishUnchangedFile(srcFS vfs.FS, srcPath, dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
+	defer r.moveUnchanged(srcFS, srcPath, dstPath)
 	if r.copyOpts.Preserve {
 		if diff := attrDiff(srcInfo, v); diff != "" {
 			if !r.opts.DryRun {
@@ -396,6 +409,8 @@ func (r *runner) summary() *Summary {
 		Linked:   r.linked.Load(),
 		Updated:  r.updated.Load(),
 		Deleted:  r.deleted.Load(),
+		Renamed:  r.renamed.Load(),
+		Removed:  r.removed.Load(),
 		Bytes:    r.bytes.Load(),
 		Skipped:  r.skipped.Load(),
 		Failed:   r.failed.Load(),
