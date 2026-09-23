@@ -18,6 +18,7 @@ import (
 // buffers, returning the summary plus everything written to stdout and stderr.
 func captureRun(t *testing.T, o *options.Options) (*Summary, string, string) {
 	t.Helper()
+	t.Serial()
 	require.NoError(t, o.Validate())
 	var out, errOut bytes.Buffer
 	oldOut, oldErr := runStdout, runStderr

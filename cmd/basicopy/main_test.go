@@ -104,6 +104,7 @@ func TestVersionCommand(t *testing.T) {
 }
 
 func TestRootCommandCopies(t *testing.T) {
+	t.Serial()
 	src, dst := mkTree(t)
 	opts = options.Options{}
 	bufferStr = ""
@@ -116,6 +117,7 @@ func TestRootCommandCopies(t *testing.T) {
 }
 
 func TestRootCommandBadBuffer(t *testing.T) {
+	t.Serial()
 	opts = options.Options{}
 	bufferStr = ""
 	rootCmd.SetArgs([]string{"x", "--target-dir", "y", "--buffer", "not-a-size"})
@@ -125,6 +127,7 @@ func TestRootCommandBadBuffer(t *testing.T) {
 }
 
 func TestRootCommandMissingTarget(t *testing.T) {
+	t.Serial()
 	opts = options.Options{}
 	bufferStr = ""
 	rootCmd.SetArgs([]string{"x"})

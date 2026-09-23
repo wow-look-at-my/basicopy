@@ -305,6 +305,7 @@ func TestUnsupportedRecognisesSFTPStatus(t *testing.T) {
 }
 
 func TestRegistryReusesConnections(t *testing.T) {
+	t.Serial()
 	old := StartTransport
 	StartTransport = pipeTransport
 	defer func() { StartTransport = old }()

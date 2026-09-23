@@ -21,6 +21,7 @@ import (
 // single request in flight per connection, reads delayed.
 func slowRemote(t *testing.T, hydration time.Duration) {
 	t.Helper()
+	t.Serial()
 	old := vfs.StartTransport
 	vfs.StartTransport = func(vfs.Location, bool) (*vfs.Transport, error) {
 		return startSlowServer(hydration)
@@ -189,6 +190,7 @@ func TestSlowRemoteDoesNotWidenWhenIdle(t *testing.T) {
 // decisions in a reasonable wall-clock time.
 func fastControlLoops(t *testing.T) func() {
 	t.Helper()
+	t.Serial()
 	oldControl, oldConn := controlInterval, connInterval
 	controlInterval, connInterval = 10*time.Millisecond, 25*time.Millisecond
 	return func() { controlInterval, connInterval = oldControl, oldConn }

@@ -80,6 +80,7 @@ func TestFastPathsFallBackOnPipe(t *testing.T) {
 // takes several copy_file_range calls, then cancels after the earliest: the
 // copy must stop at the next chunk boundary with ErrCanceled instead of finishing.
 func TestCopyFileRangeCancelBetweenChunks(t *testing.T) {
+	t.Serial()
 	old := copyChunk
 	copyChunk = 64 << 10
 	defer func() { copyChunk = old }()

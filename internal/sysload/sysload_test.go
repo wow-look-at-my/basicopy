@@ -14,6 +14,7 @@ func TestNewSamplerStartsUnprimed(t *testing.T) {
 }
 
 func TestSamplerUnsupportedPlatform(t *testing.T) {
+	t.Serial()
 	old := readCPUTimesForSample
 	readCPUTimesForSample = func() (idle, total uint64, ok bool) { return 0, 0, false }
 	defer func() { readCPUTimesForSample = old }()
@@ -24,6 +25,7 @@ func TestSamplerUnsupportedPlatform(t *testing.T) {
 }
 
 func TestSamplerSamplesAndClamps(t *testing.T) {
+	t.Serial()
 	old := readCPUTimesForSample
 	samples := []struct {
 		idle, total uint64

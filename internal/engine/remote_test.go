@@ -22,6 +22,7 @@ import (
 // underneath.
 func fakeRemote(t *testing.T) {
 	t.Helper()
+	t.Serial()
 	old := vfs.StartTransport
 	vfs.StartTransport = func(vfs.Location, bool) (*vfs.Transport, error) {
 		srvIn, cliOut := io.Pipe()

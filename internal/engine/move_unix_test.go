@@ -12,8 +12,7 @@ import (
 	"github.com/wow-look-at-my/basicopy/internal/options"
 )
 
-// An exclude that matches nothing turns off the whole-root rename, so these
-// tests exercise the copy-then-remove path on a single local filesystem.
+// A no-op exclude turns off the rename, so the copy-then-remove path runs.
 var forceCopyPath = []string{"no-such-entry"}
 
 func TestMoveCopyPathKeepsHardlinks(t *testing.T) {

@@ -313,6 +313,7 @@ func TestIncludeOverridesExclude(t *testing.T) {
 }
 
 func TestAutoscaleControllerRuns(t *testing.T) {
+	t.Serial()
 	old := controlInterval
 	controlInterval = time.Millisecond
 	oldW := watchInterval
@@ -344,6 +345,7 @@ func TestReserveSpaceDisabled(t *testing.T) {
 }
 
 func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
+	t.Serial()
 	old := availBytes
 	availBytes = func(vfs.FS, string) (int64, bool) { return 100, true }
 	defer func() { availBytes = old }()
@@ -355,6 +357,7 @@ func TestReserveSpaceAbortsWhenFileWontFit(t *testing.T) {
 }
 
 func TestReserveSpaceConfirmsRoomViaStatfs(t *testing.T) {
+	t.Serial()
 	old := availBytes
 	availBytes = func(vfs.FS, string) (int64, bool) { return 1 << 30, true }
 	defer func() { availBytes = old }()
@@ -366,6 +369,7 @@ func TestReserveSpaceConfirmsRoomViaStatfs(t *testing.T) {
 }
 
 func TestProgressAlwaysDraws(t *testing.T) {
+	t.Serial()
 	oldP := progressInterval
 	progressInterval = time.Millisecond
 	defer func() { progressInterval = oldP }()

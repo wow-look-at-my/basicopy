@@ -27,6 +27,7 @@ func TestUtilSamplerWithoutDevice(t *testing.T) {
 }
 
 func TestUtilSamplerUnsupportedDevice(t *testing.T) {
+	t.Serial()
 	old := readIOTicksForSample
 	readIOTicksForSample = func(name string) (uint64, bool) { return 0, false }
 	defer func() { readIOTicksForSample = old }()
@@ -37,6 +38,7 @@ func TestUtilSamplerUnsupportedDevice(t *testing.T) {
 }
 
 func TestUtilSamplerSamplesAndClamps(t *testing.T) {
+	t.Serial()
 	old := readIOTicksForSample
 	ticks := []uint64{10, 15, 1_000_000}
 	readIOTicksForSample = func(name string) (uint64, bool) {
