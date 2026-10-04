@@ -29,8 +29,8 @@ const sshScheme = "ssh://"
 //
 // The rules match scp/rsync so muscle memory transfers: a colon before the
 // earliest "/" makes it remote ("pc:/srv", "me@pc:notes"), and anything else
-// is local. A local path whose earliest segment really does contain a colon
-// can be forced local by writing it as "./weird:name" or with an absolute path.
+// is local. A local path whose earliest segment does contain a colon can be
+// forced local by writing it as "./weird:name" or with an absolute path.
 func Parse(arg string) (Location, error) {
 	if strings.HasPrefix(arg, sshScheme) {
 		return parseURL(arg)

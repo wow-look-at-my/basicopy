@@ -151,7 +151,7 @@ func TestSlowRemoteReadsRunInParallel(t *testing.T) {
 	require.EqualValues(t, files, sum.Files)
 	require.Zero(t, sum.Failed)
 
-	// A single connection cannot beat serial reads; use the reads actually issued.
+	// A single connection cannot beat serial reads; use the reads issued.
 	reads := readCount.Load()
 	require.Positive(t, reads)
 	serial := time.Duration(reads) * hydration

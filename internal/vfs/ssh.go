@@ -22,10 +22,11 @@ type Transport struct {
 // StartTransport is a var so tests can swap in an in-process SFTP server.
 var StartTransport = startSSH
 
-// sshArgs builds the ssh command line. extra marks a pool-widening connection:
-// BatchMode=yes stops it from prompting for a credential (the dial just fails
-// instead), and ConnectTimeout bounds it against an unreachable host. The
-// earliest connection is the user's own interactive ssh session and gets neither.
+// sshArgs builds the ssh command line. extra marks a pool-widening
+// connection: BatchMode=yes stops it from prompting for a credential (the
+// dial fails instead), and ConnectTimeout bounds it against an unreachable
+// host. The earliest connection is the user's own interactive ssh session and
+// gets neither.
 func sshArgs(loc Location, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
@@ -120,8 +121,7 @@ func hostLabel(loc Location) string {
 	return loc.Host
 }
 
-// Registry hands out a single FS per host and keeps it alive for the whole
-// run, so several sources on the same machine share a single connection pool.
+// Registry hands out a single FS per host.
 type Registry struct {
 	mu    sync.Mutex
 	conns map[string]FS

@@ -29,9 +29,9 @@ func TestOnStallNonTTYAborts(t *testing.T) {
 }
 
 // TestProgressCountTracksInflightBytes guards the stall-watchdog fix: bytes
-// written while a large file is still being copied (moved) must count as forward
-// progress, even though no file has completed yet (bytes/files unchanged). Without
-// this, a single multi-GB file in flight looks like a stall and aborts the run.
+// written while a large file is still being copied (moved) must count as
+// forward progress, even though no file has completed yet (bytes/files
+// unchanged).
 func TestProgressCountTracksInflightBytes(t *testing.T) {
 	r := &runner{opts: &options.Options{}}
 	base := r.progressCount()

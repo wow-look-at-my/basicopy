@@ -24,9 +24,10 @@ type linkEnt struct {
 
 // handleRegular preserves hardlinks (default-on): the earliest path to a
 // multiply- linked inode is copied; subsequent paths are recorded to be
-// link()ed to that earliest copy after all copies finish. Single-link files are
-// just copied. Dry runs use the same hardlink bookkeeping so their itemization
-// matches what a real run would do (a single copy plus links, not N independent copies).
+// link()ed to that earliest copy after all copies finish. Single-link files
+// are copied. Dry runs use the same hardlink bookkeeping so their itemization
+// matches what a real run would do (a single copy plus links, not N
+// independent copies).
 func (r *runner) handleRegular(root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
 	if !r.opts.NoHardlinks {
 		key, nlink, ok := root.fs.FileID(fi)
@@ -62,17 +63,15 @@ func (r *runner) noteNoFileIDs(fsys vfs.FS) {
 	r.verbose("%s: SSH exposes no inode identity; hardlinks in the source cannot be detected", fsys.Host())
 }
 
-// handleMultiLink handles a single path to a multiply-linked source inode. The
-// earliest path becomes the primary: it is copied — or, when its destination
-// is already up to date, the existing destination file is adopted as-is. Every
-// later path to the same inode is hardlinked to the primary's destination after
-// all copies finish, unless it already IS the adopted primary's inode (nothing to do).
+// handleMultiLink handles a single path to a multiply-linked source inode.
+// The earliest path becomes the primary: it is copied — or, when its
+// destination is already up to date, the existing destination file is adopted
+// as-is. Every later path to the same inode is hardlinked to the primary's
+// destination after all copies finish, unless it already IS the adopted
+// primary's inode (nothing to do).
 //
 // Adopting an unchanged primary (rather than skipping it before the hardlink
-// bookkeeping, as this used to) matters for incremental runs: without a
-// recorded primary, a secondary missing from the destination was recopied as an
-// independent duplicate, silently losing the hardlink structure and doubling
-// the stored data.
+// bookkeeping, as.
 func (r *runner) handleMultiLink(root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState, key string) {
 	if p, seen := r.hardlinkMap[key]; seen {
 		if p.adopted && r.sameDestFile(p.dst, dstPath) {

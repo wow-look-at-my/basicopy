@@ -22,7 +22,7 @@ const (
 )
 
 // Sample is a single observation at a control tick. Unknown guard signals are
-// encoded as negative values so they are simply ignored.
+// encoded as negative values so they are ignored.
 type Sample struct {
 	Throughput float64 // bytes/sec observed since the last tick
 	SysCPU     float64

@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Bavail, not the total free count: bytes an unprivileged caller can actually write.
+// Bavail, not the total free count: bytes an unprivileged caller can write.
 func statfsAvail(path string) (int64, bool) {
 	var st unix.Statfs_t
 	if err := unix.Statfs(path, &st); err != nil {
