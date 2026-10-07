@@ -190,7 +190,7 @@ func TestRemoteAvail(t *testing.T) {
 
 // TestPoolGrowsWithConcurrentTransfers is the property the copy depends on:
 // another transfer must not be made to queue behind the earliest on a single
-// connection, because the far side would run them in sequence.
+// connection. This is because the far side would run them in sequence.
 func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	fsys := testFS(t)
 	pooled, ok := fsys.(Pooled)
@@ -264,7 +264,7 @@ func TestPoolStopsAtMaxConnections(t *testing.T) {
 
 // TestFirstConnectionStaysClearForMetadata: a single time the pool has grown,
 // directory listings and stats must not queue behind a file that takes a
-// minute to read, or the walk stops feeding the workers.
+// minute to read. Otherwise, the walk stops feeding the workers.
 func TestFirstConnectionStaysClearForMetadata(t *testing.T) {
 	fsys := testFS(t)
 	rf := fsys.(*remoteFS)

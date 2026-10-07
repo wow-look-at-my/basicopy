@@ -102,7 +102,7 @@ func TestPlainCopyDirect(t *testing.T) {
 
 // TestPlainCopyProgress checks that the buffered path reports incremental
 // progress: a file larger than the copy's internal chunk fires the callback more
-// than a single time, and the reported bytes sum to the file size.
+// than a single time. The reported bytes sum to the file size.
 func TestPlainCopyProgress(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "a")
@@ -151,8 +151,9 @@ func TestCopyFileReportsProgress(t *testing.T) {
 }
 
 // TestMetaUnsupported checks the predicate that lets metadata preservation skip
-// operations a destination filesystem cannot perform (FAT/exFAT/NTFS), so a copy
-// whose data succeeded is never discarded over a chmod/chown/utimes failure.
+// operations a destination filesystem cannot perform (FAT/exFAT/NTFS). This is
+// so a copy whose data succeeded is never discarded over a chmod/chown/utimes
+// failure.
 func TestMetaUnsupported(t *testing.T) {
 	assert.True(t, metaUnsupported(errors.ErrUnsupported))
 	// Real callers wrap the syscall error; errors.Is must still see through it.
@@ -178,7 +179,7 @@ func TestCopyFileFsync(t *testing.T) {
 }
 
 // TestPlainCopyCancelStopsEarly cancels after the earliest chunk's progress:
-// the buffered loop must stop at the next chunk boundary with ErrCanceled
+// the buffered loop must stop at the next chunk. Boundary with ErrCanceled
 // rather than draining the rest of the file.
 func TestPlainCopyCancelStopsEarly(t *testing.T) {
 	dir := t.TempDir()

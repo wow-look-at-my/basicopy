@@ -16,8 +16,6 @@ import (
 //	FICLONE whole-file reflink — instant, shares extents (same-fs CoW: btrfs,
 //	   XFS-reflink, bcachefs). Independent inode/metadata; just storage-shared.
 //	   Sparse-aware copy (SEEK_DATA/SEEK_HOLE) — preserves holes for sparse files.
-//	   copy_file_range — in-kernel copy (and NFS server-side copy), no userspace
-//	   bounce buffer. Buffered read/write — the universal fallback.
 func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error) {
 	if info == nil {
 		return plainCopy(dst, src, o)

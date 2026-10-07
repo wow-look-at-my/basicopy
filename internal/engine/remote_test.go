@@ -16,8 +16,8 @@ import (
 
 // fakeRemote makes "pc:" reachable for the duration of a test by answering
 // connection attempts with an in-process SFTP server over pipes. The engine, the
-// copy primitives, and the scan comparison all run their real remote code paths
-// -- real SFTP packets, real handles, real attribute round trips -- so what these
+// copy primitives. The scan comparison all run their real remote code paths --
+// real SFTP packets, real handles, real attribute round trips. So what these
 // tests exercise differs from a copy to an actual host only in the transport
 // underneath.
 func fakeRemote(t *testing.T) {

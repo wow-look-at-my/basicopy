@@ -16,10 +16,6 @@ import (
 
 // remoteFS is a host reached over SFTP. Paths are POSIX; capabilities the protocol
 // lacks (inode identity, st_dev, xattrs) report unavailable.
-//
-// Each concurrent transfer gets its own connection, up to MaxConnections: a
-// server answers a single request at a time, so transfers sharing a connection
-// queue instead of running in parallel. Pool width tracks the worker controller's W.
 type remoteFS struct {
 	host   string // "[user@]host" for messages
 	prefix string // "[user@]host:" path prefix for output
@@ -185,7 +181,7 @@ func (f *remoteFS) Chtimes(name string, atime, mtime time.Time) error {
 }
 
 // Mkdir lets the server apply its own umask (as a local mkdir does) unless an
-// explicit non-default mode is asked for; directory metadata is applied later by
+// explicit non-default mode is asked for. Directory metadata is applied later by
 // the copy engine anyway.
 func (f *remoteFS) Mkdir(name string, perm os.FileMode) error {
 	return runErr(f, func(c *sftp.Client) error {

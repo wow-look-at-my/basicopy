@@ -22,10 +22,11 @@ type Transport struct {
 // StartTransport is a var so tests can swap in an in-process SFTP server.
 var StartTransport = startSSH
 
-// sshArgs builds the ssh command line. extra marks a pool-widening connection:
-// BatchMode=yes stops it from prompting for a credential (the dial just fails
-// instead), and ConnectTimeout bounds it against an unreachable host. The
-// earliest connection is the user's own interactive ssh session and gets neither.
+// sshArgs builds the ssh command line. extra marks a pool-widening
+// connection: BatchMode=yes stops it from prompting for a credential (the
+// dial fails instead), and ConnectTimeout bounds it against an unreachable
+// host. The earliest connection is the user's own interactive ssh session and
+// gets neither.
 func sshArgs(loc Location, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
@@ -41,9 +42,9 @@ func sshArgs(loc Location, extra bool) []string {
 }
 
 // startSSH runs ssh and returns its stdio pipes. Shelling out to the ssh binary
-// (as rsync does) is deliberate: every OpenSSH mechanism the user already relies
+// (as rsync does) is deliberate. Every OpenSSH mechanism the user already relies
 // on -- ~/.ssh/config host aliases and identities, the agent, ProxyJump,
-// known_hosts, password and 2FA prompts -- keeps working, and basicopy grows no
+// known_hosts, password and 2FA prompts. Keeps working, and basicopy grows no
 // connection settings of its own.
 func startSSH(loc Location, extra bool) (*Transport, error) {
 	argv := sshArgs(loc, extra)
@@ -120,8 +121,7 @@ func hostLabel(loc Location) string {
 	return loc.Host
 }
 
-// Registry hands out a single FS per host and keeps it alive for the whole
-// run, so several sources on the same machine share a single connection pool.
+// Registry hands out a single FS per host.
 type Registry struct {
 	mu    sync.Mutex
 	conns map[string]FS

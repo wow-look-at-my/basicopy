@@ -55,7 +55,7 @@ func TestMoveTargetFileRenames(t *testing.T) {
 	assert.Equal(t, "exact", readString(t, dst))
 }
 
-// A target that already holds the tree cannot take a rename, so the move merges
+// A target that already holds the tree cannot take a rename. The move merges
 // file by file: changed files copy, unchanged ones stay, every source goes.
 func TestMoveMergesIntoExistingTarget(t *testing.T) {
 	root := t.TempDir()
