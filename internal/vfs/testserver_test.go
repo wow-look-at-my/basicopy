@@ -9,7 +9,7 @@ import (
 )
 
 // pipeTransport is the seam that lets these tests speak the real SFTP protocol
-// without an ssh binary, a network, or credentials: an in-process sftp server
+// without an ssh binary, a network, or credentials. An in-process sftp server
 // (the same package's server implementation, operating on real files) wired to
 // the client through a pair of pipes. Everything above the pipes -- packets,
 // handles, extensions, error codes -- is exactly what a remote host would do.

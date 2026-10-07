@@ -1,7 +1,8 @@
-// Package sysload samples system-wide CPU utilization so the controller can avoid
-// pegging the machine — e.g. when CPU-intensive on-access security software makes
-// the copy CPU-bound rather than I/O-bound. On platforms where it can't read the
-// figure, Sample reports ok=false and the controller simply ignores the signal.
+// Package sysload samples system-wide CPU utilization so the controller can
+// avoid pegging the machine. E.g. when CPU-intensive on-access security
+// software makes the copy CPU-bound rather than I/O-bound. On platforms where
+// it can't read the figure, Sample reports ok=false and the controller
+// ignores the signal.
 package sysload
 
 // Sampler tracks system-wide CPU busy time across calls.

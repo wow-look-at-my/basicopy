@@ -7,7 +7,7 @@
 // returned W to the gate.
 //
 // Design (see the plan): the *throughput plateau* is the primary signal because
-// it is the a single present in every bottleneck — disk, bus/link, or CPU-bound
+// it is the a single present in every bottleneck. Disk, bus/link, or CPU-bound
 // security software all manifest as "more workers stop raising throughput".
 // System-CPU and HDD %util act only as guards that forbid growing — they never
 // override a clear plateau.
@@ -22,7 +22,7 @@ const (
 )
 
 // Sample is a single observation at a control tick. Unknown guard signals are
-// encoded as negative values so they are simply ignored.
+// encoded as negative values so they are ignored.
 type Sample struct {
 	Throughput float64 // bytes/sec observed since the last tick
 	SysCPU     float64

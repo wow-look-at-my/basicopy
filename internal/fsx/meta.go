@@ -13,8 +13,8 @@ func metaUnsupported(err error) bool {
 }
 
 // ApplyMeta applies preserved metadata (mode, owner, xattrs, times) to an
-// existing path. It is used for directories and recreated symlinks; regular
-// files get their metadata applied to the temp file inside CopyFile so the rename
+// existing path. It is used for directories and recreated symlinks. Regular files
+// get their metadata applied to the temp file inside CopyFile so the rename
 // publishes a fully formed file. Mode and times are skipped for symlinks (the
 // link itself has no meaningful mode, and portable lutimes is added later).
 // Operations the destination filesystem cannot support are skipped rather than

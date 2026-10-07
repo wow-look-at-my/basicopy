@@ -46,8 +46,8 @@ func TestMirrorDeletesExtraneous(t *testing.T) {
 }
 
 // TestMirrorRestoresDirTimes: the mirror pass runs after the copy phase has
-// already applied directory metadata, and deleting an extraneous entry bumps
-// its parent's mtime — the pass must restore the preserved directory time.
+// already applied directory metadata. Deleting an extraneous entry bumps its
+// parent's mtime — the pass must restore the preserved directory time.
 func TestMirrorRestoresDirTimes(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

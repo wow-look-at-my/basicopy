@@ -53,7 +53,7 @@ func TestCopyFileSparse(t *testing.T) {
 	assert.Less(t, int64(st.Blocks)*512, int64(size), "destination should be sparse (holes preserved)")
 }
 
-// A pipe supports neither copy_file_range nor SEEK_DATA, so both helpers must
+// A pipe supports neither copy_file_range nor SEEK_DATA. Both helpers must
 // report "unsupported" (ok=false) so the caller falls back to a buffered copy.
 func TestFastPathsFallBackOnPipe(t *testing.T) {
 	dir := t.TempDir()
@@ -77,8 +77,8 @@ func TestFastPathsFallBackOnPipe(t *testing.T) {
 }
 
 // TestCopyFileRangeCancelBetweenChunks shrinks the per-call cap so a small file
-// takes several copy_file_range calls, then cancels after the earliest: the
-// copy must stop at the next chunk boundary with ErrCanceled instead of finishing.
+// takes several copy_file_range calls, then cancels after the earliest. The copy
+// must stop at the next chunk boundary with ErrCanceled instead of finishing.
 func TestCopyFileRangeCancelBetweenChunks(t *testing.T) {
 	t.Serial()
 	old := copyChunk
