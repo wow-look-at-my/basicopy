@@ -42,9 +42,9 @@ func sshArgs(loc Location, extra bool) []string {
 }
 
 // startSSH runs ssh and returns its stdio pipes. Shelling out to the ssh binary
-// (as rsync does) is deliberate: every OpenSSH mechanism the user already relies
+// (as rsync does) is deliberate. Every OpenSSH mechanism the user already relies
 // on -- ~/.ssh/config host aliases and identities, the agent, ProxyJump,
-// known_hosts, password and 2FA prompts -- keeps working, and basicopy grows no
+// known_hosts, password and 2FA prompts. Keeps working, and basicopy grows no
 // connection settings of its own.
 func startSSH(loc Location, extra bool) (*Transport, error) {
 	argv := sshArgs(loc, extra)

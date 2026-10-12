@@ -35,8 +35,8 @@ func (d *stallDetector) update(progress int64, now time.Time) (stalled bool) {
 }
 
 // progressCount is a monotonic measure of forward progress across all work kinds.
-// It includes discovered copy work and moved (bytes written mid-copy), so neither
-// a long discovery walk nor a single large in-flight file is mistaken for a stall.
+// It includes discovered copy work and moved (bytes written mid-copy). Neither a
+// long discovery walk nor a single large in-flight file is mistaken for a stall.
 func (r *runner) progressCount() int64 {
 	return r.moved.Load() + r.totalBytes.Load() + r.totalFiles.Load() +
 		r.files.Load() + r.dirs.Load() + r.symlinks.Load() +

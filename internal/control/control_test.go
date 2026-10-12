@@ -116,9 +116,10 @@ func TestBlockedSampleGrowsW(t *testing.T) {
 	assert.Equal(t, 32, c.W(), "a stalled copy must keep widening; nothing else overlaps the waiting")
 }
 
-// TestBlockedSampleWithoutTheFlagStalls is the control case: the same empty
-// throughput, not reported as blocked, must NOT grow -- that is the ordinary
-// "this is as fast as it gets" reading, and it is why the flag has to exist.
+// TestBlockedSampleWithoutTheFlagStalls is the control case.
+// TestBlockedSampleWithoutTheFlagStalls the same empty throughput, not
+// reported as blocked, must NOT grow -- that is the ordinary "this is as fast
+// as it gets" reading.
 func TestBlockedSampleWithoutTheFlagStalls(t *testing.T) {
 	c := New(1, 32, 1)
 	for i := 0; i < 40; i++ {

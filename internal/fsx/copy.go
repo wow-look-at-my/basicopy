@@ -2,8 +2,8 @@
 // (with crash-safe temp-file + atomic rename), sparse handling, preallocation,
 // and metadata preservation. Fast in-kernel paths (copy_file_range, clonefile,
 // CopyFileEx) are layered on in build-tagged files and are used when both sides
-// are local files; copy.go is the portable core, and the same core carries a
-// copy to or from a remote host over SFTP.
+// are local files. Copy.go is the portable core. The same core carries a copy
+// to or from a remote host over SFTP.
 package fsx
 
 import (
@@ -38,8 +38,8 @@ var ErrCanceled = errors.New("copy canceled")
 // canceled reports whether the caller asked in-flight copies to stop.
 func (o *CopyOptions) canceled() bool { return o.Cancel != nil && o.Cancel() }
 
-// CopyFile copies the regular file at src on srcFS to dst on dstFS, crash-safely:
-// the bytes are written to a temporary file in dst's directory, metadata is
+// CopyFile copies the regular file at src on srcFS to dst on dstFS, crash-safely.
+// The bytes are written to a temporary file in dst's directory, metadata is
 // applied, and the temp file is atomically renamed into place. An interrupted
 // copy therefore never leaves a partial file at the final path. info is src's
 // Lstat result and is used for metadata preservation. It returns the number of

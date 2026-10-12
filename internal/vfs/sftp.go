@@ -181,7 +181,7 @@ func (f *remoteFS) Chtimes(name string, atime, mtime time.Time) error {
 }
 
 // Mkdir lets the server apply its own umask (as a local mkdir does) unless an
-// explicit non-default mode is asked for; directory metadata is applied later by
+// explicit non-default mode is asked for. Directory metadata is applied later by
 // the copy engine anyway.
 func (f *remoteFS) Mkdir(name string, perm os.FileMode) error {
 	return runErr(f, func(c *sftp.Client) error {

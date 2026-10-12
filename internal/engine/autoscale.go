@@ -18,7 +18,7 @@ var (
 )
 
 // runController is the auto-scaling loop. It seeds the worker limit from the
-// device class, then each tick measures achieved throughput plus the CPU and
+// device class, then each tick measures achieved throughput plus the CPU. And
 // device-util guard signals and lets the controller resize the gate. On a remote
 // copy it also drives the SSH connection pool from the same measurements (see
 // connScaler).

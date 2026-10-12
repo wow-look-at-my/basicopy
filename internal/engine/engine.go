@@ -1,12 +1,12 @@
-// Package engine orchestrates a copy run: it resolves the destination, walks the
+// Package engine orchestrates a copy run. It resolves the destination, walks the
 // sources (pipelined), and copies files concurrently through a resizable gate
 // using the fsx primitives. Directory creation and symlink handling happen on the
-// walk goroutine so a child's parent always exists before the child is scheduled;
-// directory metadata is applied a single time each directory's own child entries
+// walk goroutine so a child's parent always exists before the child is scheduled.
+// Directory metadata is applied a single time each directory's own child entries
 // are done so file writes don't bump directory mtimes back.
 //
-// Either end may be a remote host written as "[user@]host:/path": every
-// filesystem call goes through the vfs seam, so the walk, the worker pool, the
+// Either end may be a remote host written as "[user@]host:/path". Every
+// filesystem call goes through the vfs seam. The walk, the worker pool, the
 // controller, and the mirror pass are the same code for a local disk and for an
 // SSH connection.
 package engine
@@ -212,8 +212,8 @@ type mirrorRoot struct {
 }
 
 // resolveTarget splits the destination argument into the filesystem it lives on
-// (dialing the host if it is remote) and the path on that filesystem, so the
-// rest of the engine never parses a "host:" prefix again.
+// (dialing the host if it is remote) and the path on that filesystem. The rest
+// of the engine never parses a "host:" prefix again.
 func (r *runner) resolveTarget() error {
 	arg := r.opts.TargetDir
 	if arg == "" {
@@ -327,10 +327,10 @@ func (r *runner) copyOne(job fileJob) {
 
 // finishUnchangedFile finalizes a destination file whose content is already up
 // to date: when metadata preservation is on and the verdict reports attribute
-// drift, the attributes are synced (or, in a dry run, itemized) and the entry
-// counts as updated; otherwise it is a plain skip. Attribute application is
-// best-effort, matching the directory-metadata policy (a warning, not a
-// failure).
+// drift. The attributes are synced (or, in a dry run, itemized) and the entry
+// counts as updated. This also covers otherwise it is a plain skip. Attribute
+// application is best-effort, matching the directory-metadata policy (a
+// warning, not a failure).
 func (r *runner) finishUnchangedFile(srcFS vfs.FS, srcPath, dstPath string, srcInfo os.FileInfo, v scan.Verdict) {
 	defer r.moveUnchanged(srcFS, srcPath, dstPath)
 	if r.copyOpts.Preserve {

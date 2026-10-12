@@ -1,5 +1,5 @@
 // The SSH connection pool: how many connections a remote copy runs over, and
-// which connection each operation uses. docs/ssh.md has the reasoning; briefly,
+// which connection each operation uses. docs/ssh.md has the reasoning. Briefly,
 // an sftp-server answers a single request at a time, so transfers sharing a
 // connection are transfers in a queue.
 package vfs

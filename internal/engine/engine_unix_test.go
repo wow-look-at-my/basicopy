@@ -18,7 +18,7 @@ import (
 )
 
 // TestNoSpaceAbortsRun checks that a full destination (ENOSPC) aborts the whole
-// run rather than being isolated as a single-file failure -- otherwise a backup
+// run rather than being isolated as a single-file failure. Otherwise a backup
 // to a too-small target would pointlessly fail every remaining file.
 func TestNoSpaceAbortsRun(t *testing.T) {
 	r := &runner{opts: &options.Options{}, stderr: io.Discard}
@@ -97,11 +97,11 @@ func assertHardlinked(t *testing.T, a, b string) {
 	assert.True(t, os.SameFile(s0, s1), "destination files must share one inode")
 }
 
-// TestHardlinkRelinkedToUnchangedPrimary reproduces the incremental-run bug where
-// the earliest path to a linked inode is skipped as unchanged and therefore never
-// recorded as the link primary: a secondary missing from the destination was then
-// recopied as an independent duplicate instead of relinked, silently losing the
-// hardlink structure (and doubling the stored data).
+// TestHardlinkRelinkedToUnchangedPrimary reproduces the incremental-run bug. This
+// happens where the earliest path to a linked inode is skipped as unchanged and
+// therefore never recorded as the link primary. A secondary missing from the
+// destination was then recopied as an independent duplicate instead of relinked,
+// silently losing the hardlink structure (and doubling the stored data).
 func TestHardlinkRelinkedToUnchangedPrimary(t *testing.T) {
 	o, dst := hardlinkPair(t)
 	_, err := Run(context.Background(), o)
@@ -150,8 +150,8 @@ func TestHardlinkRejoinsSeparatedCopies(t *testing.T) {
 }
 
 // TestDryRunHardlinkItemized: dry runs use the same hardlink bookkeeping as
-// real ones, so a linked pair itemizes as a single copy plus a single
-// hardlink instead of independent copies (matching what the real run will do).
+// real ones. A linked pair itemizes as a single copy plus a single hardlink
+// instead of independent copies (matching what the real run will do).
 func TestDryRunHardlinkItemized(t *testing.T) {
 	o, dst := hardlinkPair(t)
 	od := *o

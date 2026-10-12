@@ -203,8 +203,8 @@ func TestIncludeTrailingSlashDirOnly(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "the vendor FILE stays excluded; only the dir is re-included")
 }
 
-// TestExcludeTrailingSlashIgnoresSymlinkToDir: a dir-only pattern must not
-// match a symlink even when its target is a directory -- the entry itself is a
+// TestExcludeTrailingSlashIgnoresSymlinkToDir. A dir-only pattern must not
+// match a symlink even when its target is a directory. The entry itself is a
 // link, not a directory (Lstat semantics, matching rsync).
 func TestExcludeTrailingSlashIgnoresSymlinkToDir(t *testing.T) {
 	root := t.TempDir()

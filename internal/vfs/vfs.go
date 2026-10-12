@@ -2,11 +2,11 @@
 // reached over SSH exactly like the local disk. A local FS is a thin shell over
 // the os package (same syscalls, same path rules as before); a remote FS speaks
 // SFTP over an ssh subprocess, so every OpenSSH feature -- ~/.ssh/config host
-// aliases, agent and key auth, ProxyJump, known_hosts -- applies without
+// aliases, agent and key auth, ProxyJump, known_hosts. Applies without
 // basicopy reimplementing any of it.
 //
 // Remote paths are always POSIX, so path manipulation lives on the FS rather
-// than in the caller: use fs.Join/Dir/Base, never filepath.*, on a path that
+// than in the caller. Use fs.Join/Dir/Base, never filepath.*, on a path that
 // might be remote.
 package vfs
 
@@ -32,7 +32,7 @@ type File interface {
 //
 // Capability queries (Owner, FileID, Dev, Avail) return ok=false rather than an
 // error when the underlying filesystem or protocol cannot answer -- SFTP has no
-// inode numbers, for instance -- so callers degrade instead of failing.
+// inode numbers, for instance. So callers degrade instead of failing.
 type FS interface {
 	// Local reports whether this is the machine basicopy runs on.
 	Local() bool

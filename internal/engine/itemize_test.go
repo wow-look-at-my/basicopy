@@ -321,9 +321,9 @@ func TestMirrorDryRunItemizesDeletes(t *testing.T) {
 	assert.NoError(t, err, "dry run must not delete")
 }
 
-// TestJSONKeepsStdoutPure: --json owns stdout for the machine-readable summary,
-// so the engine must emit no per-item lines there -- neither dry-run
-// itemization nor --verbose lines may mix human text into the JSON stream.
+// TestJSONKeepsStdoutPure: --json owns stdout for the machine-readable summary.
+// The engine must emit no per-item lines there -- neither dry-run itemization
+// nor --verbose lines may mix human text into the JSON stream.
 func TestJSONKeepsStdoutPure(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")

@@ -2,12 +2,13 @@
 // can be skipped. The default quick check compares size and mtime (cheap, and
 // reliable because basicopy preserves mtime on copy); --checksum compares BLAKE3
 // content hashes instead. Compare returns a reason-coded verdict so callers can
-// itemize why a file will be copied -- and, for a file whose content is already
-// up to date, which attributes have drifted and still need a touch-up.
+// itemize why a file will be copied -- and. That Compare is for a file whose
+// content is already up to date. This attributes have drifted and still need a
+// touch-up.
 //
-// Either side may live on a remote host: the comparison goes through the vfs
+// Either side may live on a remote host. The comparison goes through the vfs
 // seam, so --checksum over SSH reads the remote file's bytes to hash them (there
-// is no remote hashing agent), which is why size+mtime remains the default.
+// is no remote hashing agent). This is why size+mtime remains the default.
 package scan
 
 import (

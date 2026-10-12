@@ -1,6 +1,6 @@
 // Package options holds the fully-parsed configuration for a single basicopy run.
 // It is shared between the CLI layer (which fills it from flags) and the engine
-// (which consumes it), and deliberately has no dependency on cobra so the engine
+// (which consumes it), and deliberately has no dependency on cobra. So the engine
 // stays usable as a library.
 package options
 

@@ -234,10 +234,10 @@ func TestSkipUnchangedOnRerun(t *testing.T) {
 	assert.EqualValues(t, 2, sum2.Skipped, "re-run should skip both unchanged files")
 }
 
-// TestCanceledCopyIsNotAFailure: a single time the run is aborting, an
-// in-flight copy interrupted via the Cancel hook must stop without being
-// recorded as a per-file failure (the abort itself is the run's error) and
-// without publishing a destination file.
+// TestCanceledCopyIsNotAFailure: a single time the run is aborting.
+// Consider an in-flight copy interrupted via the Cancel hook. That copy
+// must stop without being recorded as a per-file failure (the abort itself
+// is the run's error) and without publishing a destination file.
 func TestCanceledCopyIsNotAFailure(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src.bin")
@@ -258,7 +258,7 @@ func TestCanceledCopyIsNotAFailure(t *testing.T) {
 }
 
 // TestSkipUnchangedSymlinkTargetOnRerun guards the incremental path for
-// dereferenced in-tree symlinks: the copy made for the symlink must get the same
+// dereferenced in-tree symlinks. The copy made for the symlink must get the same
 // skip-unchanged treatment as a plain file, or every re-run recopies it.
 func TestSkipUnchangedSymlinkTargetOnRerun(t *testing.T) {
 	root := t.TempDir()

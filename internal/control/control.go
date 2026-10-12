@@ -7,7 +7,7 @@
 // returned W to the gate.
 //
 // Design (see the plan): the *throughput plateau* is the primary signal because
-// it is the a single present in every bottleneck — disk, bus/link, or CPU-bound
+// it is the a single present in every bottleneck. Disk, bus/link, or CPU-bound
 // security software all manifest as "more workers stop raising throughput".
 // System-CPU and HDD %util act only as guards that forbid growing — they never
 // override a clear plateau.
