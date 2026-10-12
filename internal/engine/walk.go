@@ -1,8 +1,17 @@
+<<<<<<< HEAD
 // Walking and per-entry dispatch: destination resolution for each source, the
 // recursive visit of directories/files/symlinks on the walk goroutine,
 // per-entry itemization, exclude/include matching, and destination-root
 // setup. Every source carries the filesystem it lives on (srcRoot), so a walk
 // over an SSH connection is the same code as a walk over a local directory.
+=======
+// Walking and per-entry dispatch. This is destination resolution for each
+// source, the recursive visit of directories/files/symlinks on the walk
+// goroutine, and per-entry itemization. This also is exclude/include
+// matching, and destination-root setup. Every source carries the filesystem
+// it lives on (srcRoot). A walk over an SSH connection is the same code as a
+// walk over a local directory.
+>>>>>>> origin/master
 package engine
 
 import (
@@ -194,7 +203,7 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 
 // noteDirChange itemizes a destination directory: "mkdir" if missing, or an
 // attribute-only "update" for drifted mode/owner (never a bare mtime line).
-// The Lstat behind this runs only on dry runs and --verbose; the quiet
+// The Lstat behind this runs only on dry runs and --verbose. The quiet
 // real-run path stays stat-free, since the metadata pass reapplies
 // attributes anyway.
 func (r *runner) noteDirChange(root *srcRoot, srcDir, dstDir string, fi os.FileInfo) {
@@ -372,7 +381,7 @@ func (r *runner) setRootDev(fsys vfs.FS, fi os.FileInfo) {
 }
 
 // excluded applies the --exclude/--include globs. A path is excluded if it
-// matches any --exclude pattern and no --include pattern; patterns are matched
+// matches any --exclude pattern and no --include pattern. Patterns are matched
 // against both the path relative to the source root and the basename. isDir
 // says whether the entry is a directory, which patterns with a trailing slash
 // require.

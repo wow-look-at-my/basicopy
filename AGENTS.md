@@ -10,7 +10,11 @@ basicopy exists because `robocopy /MT:n` makes you *guess* a thread count and `r
 - **"Add a flag for it" is never the answer** to "this is faster in some situations". Find the signal that distinguishes those situations, feed it to the controller, and let the loop decide (throughput plateau is usually it).
 - **The existing flags are not precedent.** `--max-threads` and `--buffer` are *ceilings and escape hatches* for shared machines, not tuning dials, and the list does not grow. Behavior flags (`--mirror`, `--checksum`, `--dry-run`) say *what to do*, not *how fast to do it*.
 - **No environment variables, no config file, no `-o` passthrough** for performance either — same rule, different spelling.
+<<<<<<< HEAD
 - Applies to remote copies exactly as it does to local ones. The SSH connection pool widens itself on the plateau signal (`docs/ssh.md`), and everything about *how* to reach a host comes from the user's own `~/.ssh/config`. This they already maintain for every other tool.
+=======
+- Applies to remote copies exactly as it does to local ones. The SSH connection pool widens itself on the plateau signal (`docs/ssh.md`). Everything about *how* to reach a host comes from the user's own `~/.ssh/config`, which they already maintain for every other tool.
+>>>>>>> origin/master
 
 ## Build & test
 
@@ -56,14 +60,22 @@ Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
 
 ## Key design points
 
+<<<<<<< HEAD
 - **The controller is the heart.** `control.Controller` consumes `Sample`s (throughput + optional CPU/util guards) and returns the worker limit `W`. Throughput plateau is the primary signal (it is the only one present for disk, bus/link, and CPU bottlenecks alike). CPU and HDD `%util` only *gate growth*. At the plateau it trims to the minimum `W` that still holds the plateau peak. It is pure so it can be unit-tested deterministically.
+=======
+- **The controller is the heart.** `control.Controller` consumes `Sample`s (throughput + optional CPU/util guards) and returns the worker limit `W`. Throughput plateau is the primary signal (it is the only one present for disk, bus/link, and CPU bottlenecks alike), CPU and HDD `%util` only *gate growth*. At the plateau it trims to the minimum `W` that still holds the plateau peak. It is pure so it can be unit-tested deterministically.
+>>>>>>> origin/master
 - **The gate** (`engine/gate.go`) is a resizable concurrency limiter. The controller calls `setLimit` each tick. A fixed pool of workers acquires it per job, so scaling does not churn goroutines.
 - **Walk vs workers.** Directory creation, symlink handling, hardlink detection, and exclude/one-file-system decisions happen on the walk goroutine (no locking). File copies — and the per-file skip-unchanged check, so --checksum hashing parallelizes instead of serializing on the walk — run on the pool. Directory metadata and hardlinks are applied after all copies so file writes do not clobber dir mtimes and link targets exist.
 - **Crash safety:** every file is written to a temp file in the destination directory and atomically renamed. An interrupted run never leaves a corrupt file at the final path.
 - **One code path, kinds of filesystem.** Nothing outside `vfs` calls `os.*` or `filepath.*` on a copy path: each side of a copy carries a `vfs.FS` (which also supplies the path helpers, POSIX for remote). Adding a capability means adding it once.
 - **One connection per concurrent transfer.** An sftp-server answers one request at a time, so transfers sharing a connection run in sequence on the far side. `vfs.remoteFS` dials on demand (cap 16, first connection reserved for metadata). Restraint comes from `W`, which is already measured. `docs/ssh.md`.
 - **`--move`** (`engine/move.go`): one rename per root when the target name is free on the same host, else copy and record each finished source entry. The removal pass runs after `--mirror`, which reads the source.
+<<<<<<< HEAD
 - **A stall means grow, not stop.** `control.Sample.Blocked` (every worker busy, nothing finished) makes the controller grow `W`. At zero throughput the plateau test "the last increase did not help" is true at every `W`, which used to pin cloud-backed (OneDrive placeholder) copies to one file. This is at a time.
+=======
+- **A stall means grow, not stop.** `control.Sample.Blocked` (every worker busy, nothing finished) makes the controller grow `W`. At zero throughput the plateau test "the last increase didn't help" is true at every `W`. Which used to pin cloud-backed (OneDrive placeholder) copies to one file at a time.
+>>>>>>> origin/master
 
 ## Testing notes
 
@@ -72,4 +84,8 @@ Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
 - The env runs as root, so permission-denied paths cannot be exercised. Tests use other real failure modes (missing sources, dest collisions, ENOTDIR).
 - `vfs.FS.FileID`/`Dev` (inode identity, device) answer only on local Unix. Hardlink and one-file-system tests live in `*_unix_test.go`.
 - Remote tests need no network, credentials, or `ssh` binary. They swap `vfs.StartTransport` for an in-process `pkg/sftp` server over pipes (see `internal/vfs/testserver_test.go`, `internal/engine/remote_test.go`), so the real protocol code runs.
+<<<<<<< HEAD
 - That server answers requests concurrently, unlike a real sftp-server, so it cannot show serialization. `engine/slowremote_test.go` proxies it into one request at a time with delayed reads -- the only faithful model of a cloud-backed remote, and the regression test. This is for parallel transfers.
+=======
+- That server answers requests concurrently, unlike a real sftp-server, so it cannot show serialization. `engine/slowremote_test.go` proxies it into one request at a time with delayed reads. The only faithful model of a cloud-backed remote, and the regression test for parallel transfers.
+>>>>>>> origin/master
