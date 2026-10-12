@@ -1,17 +1,9 @@
-<<<<<<< HEAD
-// Walking and per-entry dispatch: destination resolution for each source, the
-// recursive visit of directories/files/symlinks on the walk goroutine,
-// per-entry itemization, exclude/include matching, and destination-root
-// setup. Every source carries the filesystem it lives on (srcRoot), so a walk
-// over an SSH connection is the same code as a walk over a local directory.
-=======
 // Walking and per-entry dispatch. This is destination resolution for each
 // source, the recursive visit of directories/files/symlinks on the walk
 // goroutine, and per-entry itemization. This also is exclude/include
 // matching, and destination-root setup. Every source carries the filesystem
 // it lives on (srcRoot). A walk over an SSH connection is the same code as a
 // walk over a local directory.
->>>>>>> origin/master
 package engine
 
 import (

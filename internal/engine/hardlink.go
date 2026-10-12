@@ -23,19 +23,11 @@ type linkEnt struct {
 }
 
 // handleRegular preserves hardlinks (default-on): the earliest path to a
-<<<<<<< HEAD
-// multiply- linked inode is copied; subsequent paths are recorded to be
-// link()ed to that earliest copy after all copies finish. Single-link files
-// are copied. Dry runs use the same hardlink bookkeeping so their itemization
-// matches what a real run would do (a single copy plus links, not N
-// independent copies).
-=======
 // multiply- linked inode is copied. This also covers subsequent paths are
 // recorded to be link()ed to that earliest copy after all copies finish.
 // Single-link files are copied. Dry runs use the same hardlink bookkeeping so
 // their itemization matches what a real run would do (a single copy plus
 // links, not N independent copies).
->>>>>>> origin/master
 func (r *runner) handleRegular(root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
 	if !r.opts.NoHardlinks {
 		key, nlink, ok := root.fs.FileID(fi)
@@ -72,19 +64,11 @@ func (r *runner) noteNoFileIDs(fsys vfs.FS) {
 }
 
 // handleMultiLink handles a single path to a multiply-linked source inode.
-<<<<<<< HEAD
-// The earliest path becomes the primary: it is copied — or, when its
-// destination is already up to date, the existing destination file is adopted
-// as-is. Every later path to the same inode is hardlinked to the primary's
-// destination after all copies finish, unless it already IS the adopted
-// primary's inode (nothing to do).
-=======
 // The earliest path becomes the primary. It is copied — or, when its
 // destination is already up to date, the existing destination file is adopted
 // as-is. Every later path to the same inode is hardlinked to the primary's
 // destination after all copies finish. This happens unless it already IS the
 // adopted primary's inode (nothing to do).
->>>>>>> origin/master
 //
 // Adopting an unchanged primary (rather than skipping it before the hardlink
 // bookkeeping, as.

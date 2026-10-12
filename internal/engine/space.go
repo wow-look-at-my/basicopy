@@ -19,18 +19,8 @@ func (r *runner) initSpaceGuard(dir string) {
 	}
 }
 
-<<<<<<< HEAD
-// reserveSpace checks that the destination still has room for a file of need
-// bytes before it is written, aborting the run cleanly if not. A running
-// estimate (seeded by initSpaceGuard, decremented per file) avoids a statfs
-// on every file; when the estimate is exhausted a real statfs confirms the
-// figure before any abort, so the guard is correct on a compressing/cloning
-// filesystem like ZFS where the estimate intentionally drifts low (it never
-// aborts without a fresh, real reading).
-=======
 // reserveSpace checks that the destination still has room for a file of need bytes before it is written, aborting the run cleanly if not. A running estimate (seeded by initSpaceGuard, decremented per file) avoids a statfs on every file. So the guard is correct on a compressing/cloning filesystem like ZFS where the estimate intentionally drifts low (it never aborts without a fresh, real reading). This holds when the
 // estimate is exhausted a real statfs confirms the figure before any abort.
->>>>>>> origin/master
 func (r *runner) reserveSpace(dstPath string, need int64) bool {
 	if !r.spaceCheck {
 		return true

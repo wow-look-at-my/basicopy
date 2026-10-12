@@ -1,9 +1,5 @@
 // Package sysload samples system-wide CPU utilization so the controller can
-<<<<<<< HEAD
-// avoid pegging the machine — e.g. when CPU-intensive on-access security
-=======
 // avoid pegging the machine. E.g. when CPU-intensive on-access security
->>>>>>> origin/master
 // software makes the copy CPU-bound rather than I/O-bound. On platforms where
 // it can't read the figure, Sample reports ok=false and the controller
 // ignores the signal.
