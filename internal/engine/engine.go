@@ -307,10 +307,14 @@ func (r *runner) copyOne(job fileJob) {
 	)
 	for attempt := 0; ; attempt++ {
 		n, err = fsx.CopyFile(job.srcFS, job.src, r.dfs, job.dst, job.info, r.copyOpts)
-		if err == nil || attempt >= maxRetries || !retryable(err) || r.abortErr() != nil {
+		if err == nil || isMetaErr(err) || attempt >= maxRetries || !retryable(err) || r.abortErr() != nil {
 			break
 		}
 		time.Sleep(retryBackoff(attempt))
+	}
+	if isMetaErr(err) {
+		r.warn("%v", err) // the data is published; only metadata is incomplete
+		err = nil
 	}
 	if err != nil {
 		if errors.Is(err, fsx.ErrCanceled) {
@@ -323,6 +327,12 @@ func (r *runner) copyOne(job fileJob) {
 	r.bytes.Add(n)
 	r.item("%s %s (%s)", r.transferVerb(), r.dfs.Display(job.dst), reason)
 	r.moveSource(job.srcFS, job.src, job.dst)
+}
+
+// isMetaErr reports a copy whose data landed but whose metadata did not.
+func isMetaErr(err error) bool {
+	var me *fsx.MetaError
+	return errors.As(err, &me)
 }
 
 // finishUnchangedFile finalizes a destination file whose content is already up

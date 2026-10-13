@@ -4,11 +4,19 @@ package fsx
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 
 	"golang.org/x/sys/unix"
 )
+
+// xattrSys is the extended-attribute syscall seam; tests swap it to inject errnos.
+var xattrSys = struct {
+	list func(path string, dest []byte, nofollow bool) (int, error)
+	get  func(path, name string, dest []byte, nofollow bool) (int, error)
+	set  func(path, name string, value []byte, nofollow bool) error
+}{listXattrBytes, getXattrBytes, setXattr}
 
 func copyXattrs(src, dst string, nofollow bool) error {
 	names, err := listXattrs(src, nofollow)
@@ -26,7 +34,7 @@ func copyXattrs(src, dst string, nofollow bool) error {
 			}
 			return fmt.Errorf("get xattr %s on %s: %w", name, src, err)
 		}
-		if err := setXattr(dst, name, value, nofollow); err != nil {
+		if err := xattrSys.set(dst, name, value, nofollow); err != nil {
 			if ignorableXattrErr(err) {
 				continue
 			}
@@ -37,12 +45,12 @@ func copyXattrs(src, dst string, nofollow bool) error {
 }
 
 func listXattrs(path string, nofollow bool) ([]string, error) {
-	size, err := listXattrBytes(path, nil, nofollow)
+	size, err := xattrSys.list(path, nil, nofollow)
 	if err != nil || size == 0 {
 		return nil, err
 	}
 	buf := make([]byte, size)
-	n, err := listXattrBytes(path, buf, nofollow)
+	n, err := xattrSys.list(path, buf, nofollow)
 	if err != nil {
 		return nil, err
 	}
@@ -64,12 +72,12 @@ func listXattrBytes(path string, dest []byte, nofollow bool) (int, error) {
 }
 
 func getXattr(path, name string, nofollow bool) ([]byte, error) {
-	size, err := getXattrBytes(path, name, nil, nofollow)
+	size, err := xattrSys.get(path, name, nil, nofollow)
 	if err != nil {
 		return nil, err
 	}
 	value := make([]byte, size)
-	_, err = getXattrBytes(path, name, value, nofollow)
+	_, err = xattrSys.get(path, name, value, nofollow)
 	return value, err
 }
 
@@ -87,9 +95,9 @@ func setXattr(path, name string, value []byte, nofollow bool) error {
 	return unix.Setxattr(path, name, value, 0)
 }
 
+// ignorableXattrErr: ENOTSUP, EOPNOTSUPP, ENOSYS (OpenZFS on macOS) mean no xattrs.
 func ignorableXattrErr(err error) bool {
-	return err == unix.ENOTSUP ||
-		err == unix.EOPNOTSUPP ||
-		err == unix.ENODATA ||
+	return errors.Is(err, errors.ErrUnsupported) ||
+		errors.Is(err, unix.ENODATA) ||
 		os.IsPermission(err)
 }
