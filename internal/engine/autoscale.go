@@ -19,9 +19,7 @@ var (
 
 // runController is the auto-scaling loop. It seeds the worker limit from the
 // device class, then each tick measures achieved throughput plus the CPU. And
-// device-util guard signals and lets the controller resize the gate. On a remote
-// copy it also drives the SSH connection pool from the same measurements (see
-// connScaler).
+// device-util guard signals and lets the controller resize the gate.
 func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 	dstInfo := r.probeDevice(r.localDestProbe())
 	srcInfo := r.probeDevice(r.localSourceProbe())

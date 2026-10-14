@@ -43,7 +43,7 @@ func (o *CopyOptions) canceled() bool { return o.Cancel != nil && o.Cancel() }
 // applied, and the temp file is atomically renamed into place. An interrupted
 // copy therefore never leaves a partial file at the final path. info is src's
 // Lstat result and is used for metadata preservation. It returns the number of
-// bytes copied.
+// bytes copied. A *MetaError means the file was published with incomplete metadata.
 func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileInfo, o CopyOptions) (int64, error) {
 	if o.canceled() {
 		return 0, ErrCanceled
@@ -77,16 +77,18 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 		return n, fmt.Errorf("copy %s -> %s: %w", srcFS.Display(src), dstFS.Display(dst), err)
 	}
 
+	// Metadata failures are collected, not returned: the data copy stands.
+	var metaErrs []error
 	if err := tmp.Chmod(perm); err != nil && !metaUnsupported(err) {
-		return n, fmt.Errorf("chmod %s: %w", dstFS.Display(tmpName), err)
+		metaErrs = append(metaErrs, fmt.Errorf("chmod: %w", err))
 	}
 	if o.Preserve && info != nil {
 		// Owner/xattr apply to the temp path; rename then publishes a complete file.
 		if err := preserveOwner(srcFS, info, dstFS, tmpName); err != nil {
-			return n, err
+			metaErrs = append(metaErrs, fmt.Errorf("chown: %w", err))
 		}
 		if err := copyXattrsFS(srcFS, src, dstFS, tmpName, false); err != nil {
-			return n, err
+			metaErrs = append(metaErrs, err)
 		}
 	}
 	if o.Fsync {
@@ -100,7 +102,7 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 
 	if o.Preserve && info != nil {
 		if err := preserveTimes(dstFS, tmpName, info); err != nil {
-			return n, err
+			metaErrs = append(metaErrs, err)
 		}
 	}
 
@@ -108,8 +110,21 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 		return n, fmt.Errorf("rename %s -> %s: %w", dstFS.Display(tmpName), dstFS.Display(dst), err)
 	}
 	committed = true
+	if len(metaErrs) > 0 {
+		return n, &MetaError{Path: dstFS.Display(dst), Err: errors.Join(metaErrs...)}
+	}
 	return n, nil
 }
+
+// MetaError means the file's data was copied and published at Path, but some
+// metadata could not be applied.
+type MetaError struct {
+	Path string
+	Err  error
+}
+
+func (e *MetaError) Error() string { return fmt.Sprintf("metadata on %s: %v", e.Path, e.Err) }
+func (e *MetaError) Unwrap() error { return e.Err }
 
 // copyContents moves the bytes, taking the platform fast paths (reflink, sparse
 // hole-skipping, copy_file_range) only when both ends are real local files. A
