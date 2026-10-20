@@ -34,7 +34,7 @@ var (
 func (p *placeholder) Getattr(_ context.Context, _ fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	out.Mode = syscall.S_IFREG | 0o644
 	out.Size = uint64(len(p.data))
-	out.Blksize = 4096 // go-fuse invents a block count when this is 0
+	out.Blksize = 4096
 	out.Blocks = 0
 	return 0
 }

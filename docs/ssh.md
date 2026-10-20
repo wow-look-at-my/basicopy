@@ -34,7 +34,7 @@ basicopy runs `ssh -s <host> sftp` and speaks SFTP over the subprocess's stdio, 
 - The agent, hardware keys, `known_hosts`, and password/2FA prompts all behave exactly as they do for `ssh` itself. Prompts appear on the terminal because they come from the real `ssh`.
 - Any host you can `ssh` into, you can `basicopy` to. Any host you cannot, the error you get is OpenSSH's own.
 
-There is deliberately **no** `--ssh`, `-e`, `-o`, `-i`, `-p`, or environment override. Those will only duplicate configuration the user already maintains for every other SSH tool, and each one is a way to get a copy wrong.
+There is deliberately **no** `--ssh`, `-e`, `-o`, `-i`, `-p`, or environment override. Those will only duplicate configuration the user already maintains for every other SSH tool, and each one is a way to get a copy incorrect.
 
 ## Connections (automatic, like everything else)
 
@@ -49,12 +49,12 @@ On one connection those wait one at a time. This is and a copy of such a tree ru
 
 How the pool grows:
 
-- A transfer takes a connection that is carrying none. Failing that, it takes one that is carrying a transfer but has nothing outstanding right now — the far side is keeping up. Queuing behind it costs nothing worth a handshake.
+- A transfer takes a connection that carries none. Failing that, it takes one that carries a transfer but has nothing outstanding right now — the far side keeps up. Queuing behind it costs nothing worth a handshake.
 - Otherwise the pool dials another connection and the transfer waits for it (or for an earlier transfer to finish). Waiting is the point. A file handle cannot move to another connection once it is opened. Piling onto a connection that is already waiting is a decision you cannot take back.
 - At a set value connections, or after a dial fails, transfers share connections instead of waiting.
 - Once there is more than one connection, the first is kept clear of transfers. Directory listings and stats go there. The walk never ends up queued behind a file that takes a minute to read and stops feeding the workers.
 
-**What stops it running away** is that it never decides how much parallelism to use. It follows the transfers the copy already has in flight, and *that* number is the worker controller's measured decision. A copy that gains nothing from parallelism keeps a small `W` and therefore a small pool. A single-file copy uses exactly one connection. A copy of multiple files against a fast server usually stays on one. This is because the first connection is idle between requests whenever the second transfer starts.
+**What stops it running away** is that it never decides how much parallelism to use. It follows the transfers the copy already has in flight, and *that* number is the worker controller's measured decision. A copy that gains nothing from parallelism keeps a small `W` and therefore a small pool. A single-file copy uses exactly one connection. A copy of multiple files against a fast server usually stays on one. This is because the first connection is idle between requests when the second transfer starts.
 
 Details make dialing safe rather than clever:
 

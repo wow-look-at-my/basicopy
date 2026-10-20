@@ -93,8 +93,7 @@ func copyFileRange(dst, src *os.File, size int64, o CopyOptions) (copied int64, 
 	return copied, true, nil
 }
 
-// sparseBlock is the unit of hole detection: an all-zero block is not written,
-// so it stays a hole in the destination.
+// sparseBlock is the unit of hole detection: an all-zero block is not written, so it stays a hole in the destination.
 const sparseBlock = 4096
 
 var zeroBlock [sparseBlock]byte

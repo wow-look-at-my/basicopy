@@ -71,8 +71,8 @@ func TestFastPathsFallBackOnPipe(t *testing.T) {
 }
 
 // The sparse path takes its bytes from read(), never from the hole map. A pipe
-// has no hole map at all, so its bytes must come through, with zero blocks
-// left as holes and a final partial block kept.
+// has no hole map at all. Its bytes must come through, with zero blocks left
+// as holes and a final partial block kept.
 func TestCopySparseFromRead(t *testing.T) {
 	dst, err := os.Create(filepath.Join(t.TempDir(), "d"))
 	require.NoError(t, err)
