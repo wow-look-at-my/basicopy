@@ -30,6 +30,9 @@ type CopyOptions struct {
 
 	// Cancel, if set, is polled between chunks; true stops the copy early with ErrCanceled.
 	Cancel func() bool
+
+	// Dedup, if set, lets a shared source extent be copied once and cloned on the destination after that.
+	Dedup *Dedup
 }
 
 // ErrCanceled means CopyOptions.Cancel aborted the copy; the temp file is already removed.
@@ -65,14 +68,16 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 	}
 	tmpName := tmp.Name()
 	committed := false
+	var fd fileDedup
 	defer func() {
 		if !committed {
+			fd.kill()
 			tmp.Close()
 			dstFS.Remove(tmpName)
 		}
 	}()
 
-	n, err := copyContents(tmp, in, info, o)
+	n, err := copyContents(tmp, in, info, o, &fd)
 	if err != nil {
 		return n, fmt.Errorf("copy %s -> %s: %w", srcFS.Display(src), dstFS.Display(dst), err)
 	}
@@ -96,6 +101,7 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 			return n, fmt.Errorf("fsync %s: %w", dstFS.Display(tmpName), err)
 		}
 	}
+	fd.detach()
 	if err := tmp.Close(); err != nil {
 		return n, fmt.Errorf("close %s: %w", dstFS.Display(tmpName), err)
 	}
@@ -110,6 +116,7 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 		return n, fmt.Errorf("rename %s -> %s: %w", dstFS.Display(tmpName), dstFS.Display(dst), err)
 	}
 	committed = true
+	fd.commit(dst)
 	if len(metaErrs) > 0 {
 		return n, &MetaError{Path: dstFS.Display(dst), Err: errors.Join(metaErrs...)}
 	}
@@ -129,11 +136,11 @@ func (e *MetaError) Unwrap() error { return e.Err }
 // copyContents moves the bytes, taking the platform fast paths (reflink, sparse
 // hole-skipping, copy_file_range) only when both ends are real local files. A
 // remote end is an SFTP handle, so it takes the portable streaming path.
-func copyContents(dst, src vfs.File, info os.FileInfo, o CopyOptions) (int64, error) {
+func copyContents(dst, src vfs.File, info os.FileInfo, o CopyOptions, fd *fileDedup) (int64, error) {
 	dstFile, dstLocal := dst.(*os.File)
 	srcFile, srcLocal := src.(*os.File)
 	if dstLocal && srcLocal {
-		return copyData(dstFile, srcFile, info, o)
+		return copyData(dstFile, srcFile, info, o, fd)
 	}
 	return plainCopy(dst, src, o)
 }

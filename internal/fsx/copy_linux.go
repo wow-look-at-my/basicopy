@@ -4,6 +4,7 @@ package fsx
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"syscall"
@@ -16,8 +17,10 @@ import (
 //
 //	FICLONE whole-file reflink — instant, shares extents (same-fs CoW: btrfs,
 //	   XFS-reflink, bcachefs). Independent inode/metadata; just storage-shared.
+//	Extent-aware copy -- a shared source extent that is already on the
+//	   destination is cloned there with FICLONERANGE (copyDedup).
 //	   Sparse-aware copy (all-zero blocks skipped) — preserves holes for sparse files.
-func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error) {
+func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions, fd *fileDedup) (int64, error) {
 	if info == nil {
 		return plainCopy(dst, src, o)
 	}
@@ -31,6 +34,16 @@ func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error)
 				o.Progress(size)
 			}
 			return size, nil
+		}
+		if n, ok, err := copyDedup(dst, src, size, o, fd); ok {
+			if !errors.Is(err, errSourceChanged) {
+				return n, err
+			}
+			// Nothing from the extent pass is trusted; copy the whole file again.
+			fd.kill()
+			if err := dst.Truncate(0); err != nil {
+				return 0, err
+			}
 		}
 	}
 
