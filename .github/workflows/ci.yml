@@ -74,41 +74,6 @@ jobs:
           chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
           mkdir -p "$XPLAT_OUT"
           ./build/dats.exe -v --no-sandbox test dats/data.dats dats/metadata.dats xplat/produce.dats
-      # Temporary: the hand-off's tar crashes on this tree on Windows, so this names the entry it cannot archive.
-      - name: Probe the hand-off tar here
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          p="$PWD/build/tarprobe"
-          rm -rf "$p"; mkdir -p "$p"
-          probe() {
-            if tar -c -f "$p/out.tar" -C "$1" "$2" >/dev/null 2>&1; then echo "tar archives $3"; else echo "tar FAILS on $3"; fi
-            rm -f "$p/out.tar"
-          }
-          node -e '
-            const fs = require("fs"), path = require("path");
-            const base = process.argv[1];
-            const mk = (n) => { const d = path.join(base, n); fs.mkdirSync(d, { recursive: true }); return d; };
-            let d = mk("filelink"); fs.writeFileSync(path.join(d, "t.txt"), "hi"); fs.symlinkSync("t.txt", path.join(d, "s"), "file");
-            d = mk("dangling"); fs.symlinkSync("no-such-target", path.join(d, "s"), "file");
-            d = mk("dirlink"); fs.mkdirSync(path.join(d, "real")); fs.symlinkSync("real", path.join(d, "s"), "dir");
-            d = mk("hard"); fs.writeFileSync(path.join(d, "a"), "hi"); fs.linkSync(path.join(d, "a"), path.join(d, "b"));
-          ' "$p/shapes" || echo "shapes not made"
-          for shape in filelink dangling dirlink hard; do probe "$p/shapes/$shape" . "shapes/$shape"; done
-          top="$XPLAT_OUT/tree"
-          while IFS= read -r -d '' e; do
-            rel="${e#"$top"/}"
-            probe "$top" "$rel" "tree/$rel"
-            if [ -d "$e" ]; then
-              while IFS= read -r -d '' c; do
-                crel="${c#"$top"/}"
-                probe "$top" "$crel" "tree/$crel"
-              done < <(find "$e" -mindepth 1 -maxdepth 1 -print0)
-            fi
-          done < <(find "$top" -mindepth 1 -maxdepth 1 -print0)
-          probe "$XPLAT_OUT" manifest.json xplat-out/manifest.json
-          probe "$top" . the-tree-rooted
-          probe "$XPLAT_OUT" . the-hand-off-rooted
       - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: send
