@@ -67,6 +67,22 @@ func TestRunMirrorSummary(t *testing.T) {
 	assert.Contains(t, out.String(), "deleted")
 }
 
+// An interrupted run still prints its summary, then returns ErrInterrupted for main to report.
+func TestRunInterruptedPrintsSummary(t *testing.T) {
+	src, dst := mkTree(t)
+	o := &options.Options{Sources: []string{src}, TargetDir: dst, Progress: "never"}
+	require.NoError(t, o.Validate())
+
+	var out bytes.Buffer
+	cmd := newCmd(&out)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd.SetContext(ctx)
+	err := run(cmd, o)
+	require.ErrorIs(t, err, engine.ErrInterrupted)
+	assert.Contains(t, out.String(), "0 files")
+}
+
 func TestRunJSONSummary(t *testing.T) {
 	src, dst := mkTree(t)
 	o := &options.Options{Sources: []string{src}, TargetDir: dst, JSON: true, Progress: "never"}

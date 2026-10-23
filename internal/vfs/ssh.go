@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	"github.com/wow-look-at-my/basicopy/internal/interrupt"
+	"github.com/wow-look-at-my/go-containers/set"
 )
 
 // Transport is a single live channel to a host's SFTP subsystem: the
@@ -58,10 +60,13 @@ func startSSH(loc Location, extra bool, stderr io.Writer) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	// The first Ctrl-C lets the copy drain its queue, which needs the connection alive.
+	if err := interrupt.Shield(cmd.Start); err != nil {
 		return nil, fmt.Errorf("start ssh: %w", err)
 	}
+	track(cmd.Process)
 	return &Transport{Stdout: stdout, Stdin: stdin, Close: func() error {
+		defer untrack(cmd.Process)
 		// The server exits when its stdin closes; kill it if it lingers.
 		_ = stdin.Close()
 		done := make(chan error, 1)
@@ -74,6 +79,32 @@ func startSSH(loc Location, extra bool, stderr io.Writer) (*Transport, error) {
 		}
 		return nil
 	}}, nil
+}
+
+var (
+	procsMu sync.Mutex
+	procs   set.Set[*os.Process]
+)
+
+func track(p *os.Process) {
+	procsMu.Lock()
+	procs.Add(p)
+	procsMu.Unlock()
+}
+
+func untrack(p *os.Process) {
+	procsMu.Lock()
+	procs.Remove(p)
+	procsMu.Unlock()
+}
+
+// KillAll kills every live ssh process.
+func KillAll() {
+	procsMu.Lock()
+	defer procsMu.Unlock()
+	for p := range procs.All() {
+		_ = p.Kill()
+	}
 }
 
 // clientOptions keep many requests per file in flight, so round-trip time (not

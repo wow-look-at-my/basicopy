@@ -60,7 +60,7 @@ func (r *runner) walkTargetFile(ctx context.Context) error {
 
 func (r *runner) walkTargetDir(ctx context.Context) error {
 	for _, arg := range r.opts.Sources {
-		if r.abortErr() != nil {
+		if r.halted(ctx) {
 			break
 		}
 		sfs, src, err := r.reg.Resolve(arg)
@@ -132,14 +132,8 @@ func (r *runner) walkTargetDir(ctx context.Context) error {
 // visit dispatches a single entry. Directories and symlinks are handled on the
 // walk goroutine; regular files are queued for the worker pool.
 func (r *runner) visit(ctx context.Context, root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
-	if r.abortErr() != nil {
+	if r.halted(ctx) {
 		return
-	}
-	select {
-	case <-ctx.Done():
-		r.setAbort(ctx.Err())
-		return
-	default:
 	}
 
 	if r.excluded(root, srcPath, fi.IsDir()) {
@@ -185,8 +179,8 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 	defer r.closeDir(state)
 	r.dirs.Add(1)
 	for _, cfi := range entries {
-		if r.abortErr() != nil {
-			return
+		if r.halted(ctx) {
+			return // a directory with unvisited children must not be removed by --move
 		}
 		r.visit(ctx, root, root.fs.Join(srcDir, cfi.Name()), r.dfs.Join(dstDir, cfi.Name()), cfi, state)
 	}

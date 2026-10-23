@@ -112,6 +112,11 @@ func (r *runner) sameDestFile(a, b string) bool {
 // copies have completed. A dry run itemizes and counts them without linking.
 func (r *runner) applyHardlinks() {
 	for _, l := range r.hardlinks {
+		if r.abortErr() != nil {
+			// The aborted workers dropped queued primaries, so the link target can be missing.
+			r.completeDirWork(l.parent)
+			continue
+		}
 		if r.opts.DryRun {
 			r.linked.Add(1)
 			r.item("would hardlink %s => %s", r.dfs.Display(l.dst), r.dfs.Display(l.target))

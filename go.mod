@@ -1,12 +1,13 @@
 module github.com/wow-look-at-my/basicopy
 
-go 1.25.0
+go 1.26
 
 require (
 	github.com/google/btree v1.1.3
 	github.com/pkg/sftp v1.13.11
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/wow-look-at-my/go-containers v0.0.0 // go-toolchain:branch=master
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	lukechampine.com/blake3 v1.4.1
