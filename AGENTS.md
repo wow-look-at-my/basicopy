@@ -36,6 +36,7 @@ internal/
              against synthetic throughput curves
   device/    HDD/SSD classification, optimal_io_size, same-spindle id, %util
              sampler (Linux via /sys + /proc/diskstats; stubs elsewhere)
+  interrupt/ SIGINT/SIGTERM delivery, and Shield: start a child that ignores Ctrl-C
   sysload/   system-wide CPU sampler (Linux /proc/stat; stub elsewhere)
   fsx/       copy primitives: crash-safe temp+rename, metadata, and per-OS fast
              paths (Linux reflink/sparse/copy_file_range; buffered elsewhere)
@@ -64,6 +65,7 @@ Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
 - **One code path, kinds of filesystem.** Nothing outside `vfs` calls `os.*` or `filepath.*` on a copy path: each side of a copy carries a `vfs.FS` (which also supplies the path helpers, POSIX for remote). Adding a capability means adding it once.
 - **One connection per concurrent transfer.** An sftp-server answers one request at a time, so transfers sharing a connection run in sequence on the far side. `vfs.remoteFS` dials on demand (cap 16, first connection reserved for metadata). Restraint comes from `W`, which is already measured. `docs/ssh.md`.
 - **`--move`** (`engine/move.go`): one rename per root when the target name is free on the same host, else copy and record each finished source entry. The removal pass runs after `--mirror`, which reads the source.
+- **Ctrl-C drains, it does not abort.** Context cancel stops the walk, the workers finish the queue, and `Run` returns `ErrInterrupted`. A second signal exits in `main`. ssh children start under `interrupt.Shield` so they survive the first Ctrl-C.
 - **A stall means grow, not stop.** `control.Sample.Blocked` (every worker busy, nothing finished) makes the controller grow `W`. At zero throughput the plateau test "the last increase didn't help" is true at every `W`. Which used to pin cloud-backed (OneDrive placeholder) copies to one file at a time.
 
 ## Testing notes

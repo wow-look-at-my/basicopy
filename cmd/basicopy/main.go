@@ -112,7 +112,7 @@ func main() {
 
 	err := rootCmd.ExecuteContext(ctx)
 	if errors.Is(err, engine.ErrInterrupted) {
-		fmt.Fprintln(os.Stderr, "basicopy: interrupted; files not yet queued were not copied")
+		fmt.Fprintln(os.Stderr, "basicopy: interrupted")
 		os.Exit(exitInterrupted)
 	}
 	if err != nil {
