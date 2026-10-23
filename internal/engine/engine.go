@@ -77,6 +77,12 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	if err := r.resolveTarget(); err != nil {
 		return r.summary(), err
 	}
+	// Dial each remote source before the progress line starts: a first ssh connection can prompt on the terminal.
+	for _, arg := range opts.Sources {
+		if _, _, err := r.reg.Resolve(arg); err != nil {
+			return r.summary(), err
+		}
+	}
 	// moved advances mid-copy, so live progress isn't flat until a large file finishes.
 	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
 	// Stops in-flight copies at the next chunk boundary a single time the run aborts.

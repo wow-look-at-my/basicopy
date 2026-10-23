@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -119,6 +122,57 @@ func TestCopyFromRemoteSource(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(dst, "src", "sub", "b.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "beta", string(got))
+}
+
+// lockedBuffer lets a test read what a running copy has written so far.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+func TestRemoteSourceDialsBeforeProgressDraws(t *testing.T) {
+	t.Serial()
+	fakeRemote(t)
+	oldInterval := progressInterval
+	progressInterval = time.Millisecond
+	t.Cleanup(func() { progressInterval = oldInterval })
+
+	var stderr lockedBuffer
+	drawnAtDial := -1
+	inner := vfs.StartTransport
+	vfs.StartTransport = func(loc vfs.Location, extra bool, w io.Writer) (*vfs.Transport, error) {
+		if !extra {
+			time.Sleep(50 * time.Millisecond) // the user types a password
+			drawnAtDial = stderr.Len()
+		}
+		return inner(loc, extra, w)
+	}
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeFile(t, filepath.Join(src, "a.txt"), []byte("alpha"), 0o644)
+	o := &options.Options{Sources: []string{"pc:" + src}, TargetDir: filepath.Join(root, "dst"), Progress: "always"}
+	require.NoError(t, o.Validate())
+	oldErr := runStderr
+	runStderr = &stderr
+	defer func() { runStderr = oldErr }()
+
+	sum, err := Run(context.Background(), o)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, sum.Files)
+	assert.Zero(t, drawnAtDial, "the progress line must not draw while a first ssh connection can still prompt")
 }
 
 // TestRemoteTargetFile covers --target-file with a remote destination, including
