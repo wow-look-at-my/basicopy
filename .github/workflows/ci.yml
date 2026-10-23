@@ -21,10 +21,12 @@ jobs:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      # The metadata suite reads and writes xattrs with getfattr and setfattr.
+      # The suites need the host's node and the xattr tools, which only bwrap shares. The docker fallback image has neither.
       - uses: wow-look-at-my/actions@cached-apt#latest
         with:
-          packages: attr
+          packages: attr bubblewrap
+      - name: Let bwrap open a user namespace
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: wow-look-at-my/go-toolchain@lkgb
       - name: Stage the binary for the other hosts
         shell: bash
