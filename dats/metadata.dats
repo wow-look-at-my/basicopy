@@ -36,7 +36,7 @@ tests:
 			1: '^\{"path":"link-dir","type":"symlink","link":"deep"\}$'
 			2: '^\{"path":"link-dangling","type":"symlink","link":"no-such-target"\}$'
 
-	- desc: hardlinks are kept where the host gives files an identity
+	- desc: hardlinks are kept on every host
 	  cmd: |
 		set -e
 		"$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {shared.src} --contents --target-dir {outputs.dst} --no-follow-symlinks -q
@@ -45,7 +45,7 @@ tests:
 	  outputs:
 		stdout:
 			0: "^(linux|darwin|windows) hardlinks: preserved$"
-			1: "^(linux|darwin) hardlinks: preserved$|^windows hardlinks: duplicated$"
+			1: "^(linux|darwin|windows) hardlinks: preserved$"
 
 	- desc: --no-hardlinks copies each name of a hardlink on its own
 	  cmd: |
