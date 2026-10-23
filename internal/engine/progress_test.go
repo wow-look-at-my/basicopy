@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -57,6 +58,53 @@ func TestProgressLineShowsMetadataTail(t *testing.T) {
 
 	assert.Contains(t, line, "metadata 3/8 dirs")
 	assert.Contains(t, line, "37.5%")
+}
+
+func TestMessageNeverJoinsProgressLine(t *testing.T) {
+	var stderr bytes.Buffer
+	r := &runner{opts: &options.Options{}, stdout: &stderr, stderr: &stderr}
+
+	r.drawProgress("1/2 files")
+	r.warn("skipping special file %s", "/dev/x")
+	r.clearProgressLine()
+	r.note("done")
+
+	assert.Equal(t,
+		"\r\033[K1/2 files"+
+			"\r\033[Kbasicopy: warning: skipping special file /dev/x\n1/2 files"+
+			"\r\033[K"+
+			"basicopy: done\n",
+		stderr.String(),
+		"a message must erase the progress line, end with a newline, and redraw the progress line below it")
+}
+
+func TestStdoutItemNeverJoinsProgressLine(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	r := &runner{opts: &options.Options{Verbose: true}, stdout: &stdout, stderr: &stderr}
+
+	r.drawProgress("P")
+	stderr.Reset()
+	r.item("copy %s", "a.txt")
+
+	assert.Equal(t, "copy a.txt\n", stdout.String())
+	assert.Equal(t, "\r\033[KP", stderr.String(),
+		"on a shared terminal, the progress line must be erased before a stdout line and drawn again after it")
+}
+
+func TestLineWriterSplitsChildOutputIntoLines(t *testing.T) {
+	var out bytes.Buffer
+	r := &runner{opts: &options.Options{}, stderr: &out}
+	r.drawProgress("P")
+	out.Reset()
+
+	w := &lineWriter{r: r}
+	_, err := w.Write([]byte("Warning: added host\r\nsecond "))
+	require.NoError(t, err)
+	_, err = w.Write([]byte("line\n"))
+	require.NoError(t, err)
+
+	assert.Equal(t, "\r\033[KWarning: added host\nP\r\033[Ksecond line\nP", out.String(),
+		"each ssh line is printed whole above the progress line, and a partial line waits for its newline")
 }
 
 func TestDiscoveryTotalsCountQueuedCopyWork(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 // (the same package's server implementation, operating on real files) wired to
 // the client through a pair of pipes. Everything above the pipes -- packets,
 // handles, extensions, error codes -- is exactly what a remote host would do.
-func pipeTransport(loc Location, extra bool) (*Transport, error) {
+func pipeTransport(loc Location, extra bool, _ io.Writer) (*Transport, error) {
 	srvIn, cliOut := io.Pipe()
 	cliIn, srvOut := io.Pipe()
 
@@ -50,7 +50,7 @@ func testFS(t *testing.T) FS {
 
 	loc, err := Parse("somehost:/")
 	require.NoError(t, err)
-	fsys, err := Dial(loc)
+	fsys, err := Dial(loc, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fsys.Close() })
 	return fsys
