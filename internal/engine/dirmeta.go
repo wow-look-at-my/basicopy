@@ -31,7 +31,11 @@ func metadataWorkerCount() int {
 
 func (r *runner) metadataWorker() {
 	defer r.metaWg.Done()
-	for d := range r.metaJobs {
+	for {
+		d, ok := r.metaJobs.pop()
+		if !ok {
+			return
+		}
 		if err := fsx.ApplyMeta(d.srcFS, d.src, r.dfs, d.dst, d.info, r.copyOpts.Preserve); err != nil {
 			r.warn("metadata on %s: %v", r.dfs.Display(d.dst), err)
 		}
@@ -76,6 +80,6 @@ func (r *runner) closeDir(d *dirState) {
 // children from copies or deferred hardlinks.
 func (r *runner) queueDirMeta(d *dirState) {
 	if d.queued.CompareAndSwap(false, true) {
-		r.metaJobs <- d
+		r.metaJobs.push(d)
 	}
 }

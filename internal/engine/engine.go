@@ -63,8 +63,8 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		onStack:     map[string]bool{},
 		hardlinkMap: map[string]hlPrimary{},
 		gate:        newGate(maxW, initW),
-		jobs:        make(chan fileJob, 1024),
-		metaJobs:    make(chan *dirState, 1024),
+		jobs:        newQueue[fileJob](),
+		metaJobs:    newQueue[*dirState](),
 		reg:         vfs.NewRegistry(),
 		copyOpts: fsx.CopyOptions{
 			Preserve: !opts.NoPreserve,
@@ -107,9 +107,11 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		go func() { defer r.bgWg.Done(); r.runProgress(ctx, stopBg) }()
 	}
 
+	r.scanning.Store(true)
 	err := r.walk(ctx)
 
-	close(r.jobs)
+	r.scanning.Store(false)
+	r.jobs.close()
 	if !opts.DryRun {
 		r.wg.Wait()
 	}
@@ -117,7 +119,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 
 	r.applyHardlinks()
 	if !opts.DryRun {
-		close(r.metaJobs)
+		r.metaJobs.close()
 		r.metaWg.Wait()
 	}
 	if opts.Mirror {
@@ -160,10 +162,10 @@ type runner struct {
 	targetFile string
 
 	gate *gate
-	jobs chan fileJob
+	jobs *queue[fileJob]
 	wg   sync.WaitGroup // copy workers
 
-	metaJobs chan *dirState
+	metaJobs *queue[*dirState]
 	metaWg   sync.WaitGroup // directory metadata workers
 
 	bgWg sync.WaitGroup // background goroutines: controller, watchdog, progress
@@ -187,6 +189,8 @@ type runner struct {
 
 	// totalFiles/totalBytes grow as the walk discovers work, giving live progress and ETA without blocking copying.
 	totalFiles, totalBytes atomic.Int64
+	// scanning is true while the walk runs, so the totals can still grow.
+	scanning atomic.Bool
 
 	// freeBytes guards against ENOSPC; spaceCheck false means the guard is off.
 	freeBytes  atomic.Int64
@@ -257,10 +261,14 @@ func workerCount(opts *options.Options) (max, initial int) {
 
 func (r *runner) worker() {
 	defer r.wg.Done()
-	for job := range r.jobs {
+	for {
+		job, ok := r.jobs.pop()
+		if !ok {
+			return
+		}
 		if r.abortErr() != nil {
 			r.completeDirWork(job.parent)
-			continue // drain the channel without doing work
+			continue // drain the queue without doing work
 		}
 		r.gate.acquire()
 		r.copyOne(job)

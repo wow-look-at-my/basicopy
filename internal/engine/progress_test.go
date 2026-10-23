@@ -29,6 +29,38 @@ func TestProgressLineShowsLiveTotalsAndETA(t *testing.T) {
 	assert.Contains(t, line, "ETA 15s")
 }
 
+func TestProgressLineMarksTotalsAsLowerBoundWhileScanning(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
+	r.scanning.Store(true)
+	r.files.Store(2)
+	r.totalFiles.Store(10)
+	r.totalBytes.Store(1000)
+
+	line := r.progressLine(250, 125, startedAt.Add(5*time.Second))
+
+	assert.Contains(t, line, "2/10+ files")
+	assert.Contains(t, line, "250 B/1000 B+ (25.0%)")
+	assert.Contains(t, line, "ETA 15s+")
+	assert.Contains(t, line, ", scanning")
+}
+
+func TestProgressLineWaitsForWalkBeforeMetadataTail(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
+	r.scanning.Store(true)
+	r.files.Store(10)
+	r.totalFiles.Store(10)
+	r.totalBytes.Store(100)
+	r.dirMetaDone.Store(3)
+	r.dirMetaTotal.Store(8)
+
+	line := r.progressLine(100, 0, startedAt.Add(time.Second))
+
+	assert.NotContains(t, line, "metadata")
+	assert.Contains(t, line, "scanning")
+}
+
 func TestProgressLineUsesFileTotalsForZeroByteWork(t *testing.T) {
 	startedAt := time.Unix(100, 0)
 	r := &runner{startedAt: startedAt}

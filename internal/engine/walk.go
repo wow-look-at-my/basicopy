@@ -226,7 +226,7 @@ func (r *runner) enqueueFile(root *srcRoot, srcPath, dstPath string, fi os.FileI
 		return
 	}
 	r.addDirWork(parent)
-	r.jobs <- fileJob{srcFS: root.fs, src: srcPath, dst: dstPath, info: fi, parent: parent, checkUnchanged: checkUnchanged, reason: reason}
+	r.jobs.push(fileJob{srcFS: root.fs, src: srcPath, dst: dstPath, info: fi, parent: parent, checkUnchanged: checkUnchanged, reason: reason})
 }
 
 func (r *runner) visitSymlink(ctx context.Context, root *srcRoot, srcPath, dstPath string, fi os.FileInfo, parent *dirState) {
