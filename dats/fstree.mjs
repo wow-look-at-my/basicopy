@@ -212,9 +212,10 @@ function xattr(op, file, name, value) {
 		return console.log(`${host} ${name}=${out}`);
 	}
 	if (host === 'darwin') {
-		if (op === 'set') return execFileSync('xattr', ['-w', `user.${name}`, value, file]);
+		// macOS attributes carry no namespace name, so the name is the whole name; "user." is only the Linux spelling.
+		if (op === 'set') return execFileSync('xattr', ['-w', name, value, file]);
 		try {
-			const out = execFileSync('xattr', ['-p', `user.${name}`, file], { encoding: 'utf8' });
+			const out = execFileSync('xattr', ['-p', name, file], { encoding: 'utf8' });
 			return console.log(`${host} ${name}=${out.trim()}`);
 		} catch {
 			// The named attribute is missing, so say what the copy holds instead. A renamed one is a bug here, none is a bug in the copy.
