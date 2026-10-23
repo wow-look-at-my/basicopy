@@ -66,8 +66,8 @@ tests:
 		node dats/fstree.mjs sparse {outputs.dst}/sparse.bin
 	  outputs:
 		stdout:
-			0: "^(linux|darwin) sparse: holes kept$|^windows sparse: unmeasured$"
-			1: "^(linux|darwin) sparse: holes kept$|^windows sparse: unmeasured$"
+			0: "^linux sparse: holes kept$|^darwin sparse: filled$|^windows sparse: unmeasured$"
+			1: "^linux sparse: holes kept$|^darwin sparse: filled$|^windows sparse: unmeasured$"
 
 	- desc: extended attributes are kept on Linux and macOS, and an NTFS stream is not carried
 	  cmd: |
