@@ -58,16 +58,14 @@ tests:
 			0: "hardlinks: duplicated$"
 			1: "^same: 40 entries$"
 
-	- desc: a sparse file keeps its holes on Linux
+	- desc: a sparse file keeps its holes where the host stores them
 	  cmd: |
 		set -e
 		"$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {shared.src}/sparse.bin --target-file {outputs.dst}/sparse.bin -q
-		node dats/fstree.mjs sparse {shared.src}/sparse.bin
-		node dats/fstree.mjs sparse {outputs.dst}/sparse.bin
+		node dats/fstree.mjs sparse {shared.src}/sparse.bin {outputs.dst}/sparse.bin
 	  outputs:
 		stdout:
-			0: "^(linux|darwin) sparse: holes kept$|^windows sparse: unmeasured$"
-			1: "^(linux|darwin) sparse: holes kept$|^windows sparse: unmeasured$"
+			0: "^linux sparse: holes kept$|^darwin sparse: (holes kept|unmeasured \\(source holds no holes\\))$|^windows sparse: unmeasured$"
 
 	- desc: extended attributes are kept on Linux and macOS, and an NTFS stream is not carried
 	  cmd: |

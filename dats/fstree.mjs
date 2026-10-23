@@ -117,6 +117,12 @@ function sha256(p) {
 	return createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 }
 
+// blocks counts 512-byte units on every posix host, so a file that holds its holes fills less than half of them.
+function sparse(p) {
+	const st = fs.statSync(p, { bigint: true });
+	return st.blocks * 512n < st.size / 2n;
+}
+
 // The manifest holds what a host can store. Windows has no permission bits, only the read-only attribute.
 function snap(root) {
 	const out = [];
@@ -254,10 +260,18 @@ switch (cmd) {
 		break;
 	}
 	case 'sparse': {
-		const st = fs.statSync(args[0], { bigint: true });
-		// blocks counts 512-byte units on every posix host. Windows reports none.
-		if (!posix) console.log(`${host} sparse: unmeasured`);
-		else console.log(`${host} sparse: ${st.blocks * 512n < st.size / 2n ? 'holes kept' : 'filled'}`);
+		const [src, dst] = args;
+		if (!posix) {
+			console.log(`${host} sparse: unmeasured`);
+			break;
+		}
+		if (!src || !dst) die('sparse: SOURCE and TARGET are required');
+		// A host whose filesystem stores no holes cannot judge the copy, so the source answers first.
+		if (!sparse(src)) {
+			console.log(`${host} sparse: unmeasured (source holds no holes)`);
+			break;
+		}
+		console.log(`${host} sparse: ${sparse(dst) ? 'holes kept' : 'filled'}`);
 		break;
 	}
 	case 'entry': {
