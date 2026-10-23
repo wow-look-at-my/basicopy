@@ -72,9 +72,16 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 			BufSize:  int(opts.BufferSize),
 		},
 	}
+	r.reg.Diag = &lineWriter{r: r}
 	defer r.reg.Close()
 	if err := r.resolveTarget(); err != nil {
 		return r.summary(), err
+	}
+	// Dial each remote source before the progress line starts: a first ssh connection can prompt on the terminal.
+	for _, arg := range opts.Sources {
+		if _, _, err := r.reg.Resolve(arg); err != nil {
+			return r.summary(), err
+		}
 	}
 	// moved advances mid-copy, so live progress isn't flat until a large file finishes.
 	r.copyOpts.Progress = func(n int64) { r.moved.Add(n) }
@@ -173,6 +180,7 @@ type runner struct {
 	outMu     sync.Mutex
 	stdout    io.Writer
 	stderr    io.Writer
+	progress  string // the live progress line on stderr, "" when none is drawn; guarded by outMu
 	startedAt time.Time
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
@@ -432,10 +440,18 @@ func (r *runner) summary() *Summary {
 	}
 }
 
+// printLine writes one full line. The live progress line has no newline, so
+// printLine erases it first and draws it again below the message.
 func (r *runner) printLine(w io.Writer, format string, a ...any) {
 	r.outMu.Lock()
+	defer r.outMu.Unlock()
+	if r.progress != "" {
+		fmt.Fprint(r.stderr, "\r\033[K")
+	}
 	fmt.Fprintf(w, format+"\n", a...)
-	r.outMu.Unlock()
+	if r.progress != "" {
+		fmt.Fprint(r.stderr, r.progress)
+	}
 }
 
 func (r *runner) elog(format string, a ...any) {
