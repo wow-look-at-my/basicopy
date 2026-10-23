@@ -40,6 +40,7 @@ type Summary struct {
 	Renamed  int64 `json:"renamed"`   // source roots moved by a single rename
 	Removed  int64 `json:"removed"`   // source entries removed after their transfer (--move)
 	Bytes    int64 `json:"bytes"`
+	Cloned   int64 `json:"cloned"` // bytes cloned from an earlier copy of a shared source extent
 	Skipped  int64 `json:"skipped"`
 	Failed   int64 `json:"failed"`
 }
@@ -70,6 +71,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 			Preserve: !opts.NoPreserve,
 			Fsync:    opts.Fsync,
 			BufSize:  int(opts.BufferSize),
+			Dedup:    fsx.NewDedup(),
 		},
 	}
 	r.reg.Diag = &lineWriter{r: r}
@@ -450,6 +452,7 @@ func (r *runner) summary() *Summary {
 		Renamed:  r.renamed.Load(),
 		Removed:  r.removed.Load(),
 		Bytes:    r.bytes.Load(),
+		Cloned:   r.copyOpts.Dedup.Cloned(),
 		Skipped:  r.skipped.Load(),
 		Failed:   r.failed.Load(),
 	}

@@ -31,6 +31,9 @@ func run(cmd *cobra.Command, o *options.Options) error {
 		if o.Move {
 			extra += fmt.Sprintf(", %d renamed, %d source entries removed", sum.Renamed, sum.Removed)
 		}
+		if sum.Cloned > 0 {
+			extra += fmt.Sprintf(", %s cloned from shared extents", humanBytes(sum.Cloned))
+		}
 		fmt.Fprintf(cmd.OutOrStdout(),
 			"basicopy: %d files, %d dirs, %d symlinks, %d hardlinks, %d updated%s, %s; %d skipped, %d failed\n",
 			sum.Files, sum.Dirs, sum.Symlinks, sum.Linked, sum.Updated, extra, humanBytes(sum.Bytes), sum.Skipped, sum.Failed)

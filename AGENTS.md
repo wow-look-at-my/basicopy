@@ -39,7 +39,7 @@ internal/
   interrupt/ SIGINT/SIGTERM delivery, and Shield: start a child that ignores Ctrl-C
   sysload/   system-wide CPU sampler (Linux /proc/stat; stub elsewhere)
   fsx/       copy primitives: crash-safe temp+rename, metadata, and per-OS fast
-             paths (Linux reflink/sparse/copy_file_range; buffered elsewhere)
+             paths (Linux reflink/dedup/sparse/copy_file_range; buffered elsewhere)
   scan/      reason-coded skip-unchanged compare: Compare returns why a copy is
              needed (new/type change/size/mtime/content) or which attributes
              drifted (mode/owner/mtime) on an unchanged file; size+mtime by
@@ -66,6 +66,7 @@ Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
 - **One connection per concurrent transfer.** An sftp-server answers one request at a time, so transfers sharing a connection run in sequence on the far side. `vfs.remoteFS` dials on demand (cap 16, first connection reserved for metadata). Restraint comes from `W`, which is already measured. `docs/ssh.md`.
 - **`--move`** (`engine/move.go`): one rename per root when the target name is free on the same host, else copy and record each finished source entry. The removal pass runs after `--mirror`, which reads the source.
 - **Ctrl-C drains, it does not abort.** Context cancel stops the walk, the workers finish the queue, and `Run` returns `ErrInterrupted`. A second signal exits in `main`. ssh children start under `interrupt.Shield` so they survive the first Ctrl-C.
+- **Shared extents cross once** (`fsx/extents*.go`). When the whole-file reflink fails (another filesystem), FIEMAP finds the source's shared extents. The first copy of each is recorded in a run-wide index the moment its bytes land. Later references clone it with `FICLONERANGE`, and a concurrent worker waits on the claim rather than copy it twice. A clone is trusted only if the source map is unchanged after the copy, else the file is copied again in full.
 - **A stall means grow, not stop.** `control.Sample.Blocked` (every worker busy, nothing finished) makes the controller grow `W`. At zero throughput the plateau test "the last increase didn't help" is true at every `W`. Which used to pin cloud-backed (OneDrive placeholder) copies to one file at a time.
 
 ## Testing notes
