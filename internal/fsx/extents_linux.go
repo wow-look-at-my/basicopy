@@ -132,8 +132,12 @@ func copyDedup(dst, src *os.File, size int64, o CopyOptions, fd *fileDedup) (int
 	if !anyShared(segs) {
 		return 0, false, nil
 	}
+	dupFd, err := unix.Dup(int(dst.Fd()))
+	if err != nil {
+		return 0, false, nil
+	}
 	fd.srcDev = sst.Dev
-	fd.ref = &destRef{f: dst, dev: dstSt.Dev, ino: dstSt.Ino}
+	fd.ref = &destRef{f: os.NewFile(uintptr(dupFd), dst.Name()), dev: dstSt.Dev, ino: dstSt.Ino}
 
 	var cloned []segment
 	for _, s := range segs {

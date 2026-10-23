@@ -34,10 +34,10 @@ func (d *Dedup) Cloned() int64 {
 }
 
 // destRef is a destination file that holds the bytes of recorded extents.
-// While its copy runs, clones read the open temp file.
+// Until the rename, clones read the temp file through f.
 type destRef struct {
 	mu       sync.Mutex
-	f        *os.File
+	f        *os.File // a dup of the temp file's descriptor: CopyFile closes its own before the rename
 	path     string
 	dev, ino uint64
 	dead     atomic.Bool // the file was removed or its bytes are not trusted
@@ -90,23 +90,15 @@ type fileDedup struct {
 	recs   []extentLoc // the shared extents this file wrote
 }
 
-// detach stops clones from the temp file before CopyFile closes it.
-func (f *fileDedup) detach() {
-	if f.ref == nil {
-		return
-	}
-	f.ref.mu.Lock()
-	f.ref.f = nil
-	f.ref.mu.Unlock()
-}
-
-// commit points the records of this file at its published path.
+// commit points the records of this file at its published path and closes
+// the handle. One lock covers both, so no clone sees neither.
 func (f *fileDedup) commit(path string) {
 	if f.ref == nil {
 		return
 	}
 	f.ref.mu.Lock()
 	f.ref.path = path
+	f.ref.closeLocked()
 	f.ref.mu.Unlock()
 }
 
@@ -117,9 +109,16 @@ func (f *fileDedup) kill() {
 	}
 	f.ref.mu.Lock()
 	f.ref.dead.Store(true)
-	f.ref.f = nil
+	f.ref.closeLocked()
 	f.ref.mu.Unlock()
 	f.ref, f.recs = nil, nil
+}
+
+func (r *destRef) closeLocked() {
+	if r.f != nil {
+		r.f.Close()
+		r.f = nil
+	}
 }
 
 // extentIndex holds the extents of one source device, ordered by phys, then by length.

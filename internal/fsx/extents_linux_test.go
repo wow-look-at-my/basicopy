@@ -175,6 +175,44 @@ func TestDedupConcurrentCopiesShareOneTransfer(t *testing.T) {
 	assert.EqualValues(t, (n-1)*size, o.Dedup.Cloned(), "one worker copies the extent; every other worker clones it")
 }
 
+// CopyFile closes the temp file before the rename. A worker that looks up the
+// extent in that window must still find a handle to clone from.
+func TestDedupClonesFromTempFileAfterItCloses(t *testing.T) {
+	fx := installFake(t)
+	dir, out := t.TempDir(), t.TempDir()
+	const size = 64 << 10
+	data := randBytes(t, size)
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	writeSrc(t, a, data)
+	writeSrc(t, b, data)
+	fx.set(t, a, extent{0, 1 << 30, size, shared})
+	fx.set(t, b, extent{0, 1 << 30, size, shared})
+	o := CopyOptions{Dedup: NewDedup()}
+
+	copyInto := func(src string, fd *fileDedup) *os.File {
+		in, err := os.Open(src)
+		require.NoError(t, err)
+		defer in.Close()
+		tmp, err := os.CreateTemp(out, "tmp-*")
+		require.NoError(t, err)
+		_, ok, err := copyDedup(tmp, in, size, o, fd)
+		require.True(t, ok)
+		require.NoError(t, err)
+		return tmp
+	}
+	var fa, fb fileDedup
+	ta := copyInto(a, &fa)
+	require.NoError(t, ta.Close()) // a has not been renamed.
+	tb := copyInto(b, &fb)
+	defer tb.Close()
+	assert.EqualValues(t, size, o.Dedup.Cloned())
+	got, err := os.ReadFile(tb.Name())
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+	fa.kill()
+	fb.kill()
+}
+
 func TestDedupRestartsWhenSourceMoves(t *testing.T) {
 	fx := installFake(t)
 	dir := t.TempDir()

@@ -101,7 +101,6 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 			return n, fmt.Errorf("fsync %s: %w", dstFS.Display(tmpName), err)
 		}
 	}
-	fd.detach()
 	if err := tmp.Close(); err != nil {
 		return n, fmt.Errorf("close %s: %w", dstFS.Display(tmpName), err)
 	}
