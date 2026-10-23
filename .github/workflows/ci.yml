@@ -21,4 +21,106 @@ jobs:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      # The metadata suite reads and writes xattrs with getfattr and setfattr.
+      - uses: wow-look-at-my/actions@cached-apt#latest
+        with:
+          packages: attr
       - uses: wow-look-at-my/go-toolchain@lkgb
+      - name: Stage the binary for the other hosts
+        shell: bash
+        run: mkdir -p build/handoff && cp build/basicopy build/handoff/basicopy
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: send
+          name: basicopy
+          path: build/handoff
+
+  # The one APE the test job built, run on each host it ships for. The suites run unsandboxed: no host but Linux has a backend for every one.
+  every-host:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ github.event.repository.visibility == 'public' && fromJSON('[{"os":"ubuntu-latest","host":"linux"},{"os":"macos-latest","host":"darwin"},{"os":"windows-latest","host":"windows"}]') || fromJSON('[{"os":"ubuntu-latest","host":"linux"}]') }}
+    runs-on: ${{ (github.event.repository.visibility == 'public' || !contains(fromJSON('["ubuntu-latest"]'), matrix.os)) && matrix.os || vars.CI_RUNNER || matrix.os }}
+    timeout-minutes: 20
+    env:
+      GO_TOOLCHAIN_DATS_BUILD_DIR: build/bin
+      XPLAT_OUT: build/xplat-out
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        uses: wow-look-at-my/actions@cached-apt#latest
+        with:
+          packages: attr
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: receive
+          name: basicopy
+          path: build/bin
+      - id: dats
+        uses: wow-look-at-my/buildhost/.github/actions/buildhost-download@lkgb
+        with:
+          project: dats
+      # NT finds an executable by its extension. A posix host does not care, so every leg uses the .exe names.
+      - name: Data, metadata, and the cross-host fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "${{ steps.dats.outputs.path }}" build/dats.exe
+          cp build/bin/basicopy build/bin/basicopy.exe
+          chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
+          mkdir -p "$XPLAT_OUT"
+          ./build/dats.exe -v --no-sandbox test dats/data.dats dats/metadata.dats xplat/produce.dats
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: send
+          name: xplat-${{ matrix.host }}
+          path: build/xplat-out
+
+  # Each host copies the tree every host sent, so a difference between hosts shows up as a named pair.
+  cross-host:
+    needs: every-host
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ github.event.repository.visibility == 'public' && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
+    runs-on: ${{ (github.event.repository.visibility == 'public' || !contains(fromJSON('["ubuntu-latest"]'), matrix.os)) && matrix.os || vars.CI_RUNNER || matrix.os }}
+    timeout-minutes: 20
+    env:
+      GO_TOOLCHAIN_DATS_BUILD_DIR: build/bin
+      XPLAT_IN: build/xplat-in
+    steps:
+      - uses: actions/checkout@v4
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: receive
+          name: basicopy
+          path: build/bin
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: receive
+          name: xplat-linux
+          path: build/xplat-in/linux
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: receive
+          name: xplat-darwin
+          path: build/xplat-in/darwin
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+        with:
+          mode: receive
+          name: xplat-windows
+          path: build/xplat-in/windows
+      - id: dats
+        uses: wow-look-at-my/buildhost/.github/actions/buildhost-download@lkgb
+        with:
+          project: dats
+      - name: Copy every host's tree on this host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "${{ steps.dats.outputs.path }}" build/dats.exe
+          cp build/bin/basicopy build/bin/basicopy.exe
+          chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
+          ./build/dats.exe -v --no-sandbox test xplat/receive.dats

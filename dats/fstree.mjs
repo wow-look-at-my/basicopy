@@ -203,21 +203,21 @@ function xattr(op, file, name, value) {
 	if (host === 'linux') {
 		if (op === 'set') return execFileSync('setfattr', ['-n', `user.${name}`, '-v', value, file]);
 		const out = execFileSync('getfattr', ['--only-values', '-n', `user.${name}`, file], { encoding: 'utf8' });
-		return console.log(`${name}=${out}`);
+		return console.log(`${host} ${name}=${out}`);
 	}
 	if (host === 'darwin') {
 		if (op === 'set') return execFileSync('xattr', ['-w', `user.${name}`, value, file]);
 		const out = execFileSync('xattr', ['-p', `user.${name}`, file], { encoding: 'utf8' });
-		return console.log(`${name}=${out.trim()}`);
+		return console.log(`${host} ${name}=${out.trim()}`);
 	}
 	// NTFS keeps named data in an alternate data stream, the nearest thing it has to an xattr.
 	const stream = `${file}:${name}`;
 	if (op === 'set') return fs.writeFileSync(stream, value);
 	try {
-		console.log(`${name}=${fs.readFileSync(stream, 'utf8')}`);
+		console.log(`${host} ${name}=${fs.readFileSync(stream, "utf8")}`);
 	} catch (e) {
 		if (e.code !== 'ENOENT') throw e;
-		console.log(`${name} absent`);
+		console.log(`${host} ${name} absent`);
 	}
 }
 
