@@ -63,7 +63,7 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 }
 
 func (r *runner) progressLine(moved int64, currentRate float64, now time.Time) string {
-	files, totalFiles := r.files.Load(), r.totalFiles.Load()
+	files, totalFiles, skipped := r.files.Load(), r.totalFiles.Load(), r.skipped.Load()
 	totalBytes := r.totalBytes.Load()
 	dirMetaDone, dirMetaTotal := r.dirMetaDone.Load(), r.dirMetaTotal.Load()
 	displayMoved := moved
@@ -96,8 +96,8 @@ func (r *runner) progressLine(moved int64, currentRate float64, now time.Time) s
 		}
 		eta := fmtETA(totalBytes-displayMoved, avgRate) + more
 		if totalFiles > 0 {
-			return fmt.Sprintf("%d/%d%s files, %s/%s%s (%.1f%%), %s, %s, ETA %s%s",
-				files, totalFiles, more, fmtBytes(displayMoved), fmtBytes(totalBytes), more, pct, avgSpeed, currentSpeed, eta, tail)
+			return fmt.Sprintf("%d/%d%s (%d skipped) files, %s/%s%s (%.1f%%), %s, %s, ETA %s%s",
+				files, totalFiles, more, skipped, fmtBytes(displayMoved), fmtBytes(totalBytes), more, pct, avgSpeed, currentSpeed, eta, tail)
 		}
 		return fmt.Sprintf("%s/%s%s (%.1f%%), %s, %s, ETA %s%s",
 			fmtBytes(displayMoved), fmtBytes(totalBytes), more, pct, avgSpeed, currentSpeed, eta, tail)
@@ -108,11 +108,11 @@ func (r *runner) progressLine(moved int64, currentRate float64, now time.Time) s
 		if pct > 100 {
 			pct = 100
 		}
-		return fmt.Sprintf("%d/%d%s files, %s (%.1f%%), %s, %s, ETA 0s%s%s",
-			files, totalFiles, more, fmtBytes(displayMoved), pct, avgSpeed, currentSpeed, more, tail)
+		return fmt.Sprintf("%d/%d%s (%d skipped) files, %s (%.1f%%), %s, %s, ETA 0s%s%s",
+			files, totalFiles, more, skipped, fmtBytes(displayMoved), pct, avgSpeed, currentSpeed, more, tail)
 	}
 
-	return fmt.Sprintf("%d files, %s, %s, %s%s", files, fmtBytes(displayMoved), avgSpeed, currentSpeed, tail)
+	return fmt.Sprintf("%d (%d skipped) files, %s, %s, %s%s", files, skipped, fmtBytes(displayMoved), avgSpeed, currentSpeed, tail)
 }
 
 func (r *runner) averageRate(moved int64, now time.Time) float64 {
