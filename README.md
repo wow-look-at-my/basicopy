@@ -24,7 +24,7 @@ basicopy myotherpc:/home/mhayine/whatever --target-dir ./local
 - **Plateau is the universal signal.** Disk-bound, bus/link-bound, or CPU-bound (heavy on-access antivirus/EDR) all look the same to the controller: adding workers stops raising throughput. It backs off on rising I/O latency, a pinned system CPU, or a saturated HDD, so the machine stays responsive.
 - **Remote copies are just copies.** `host:/path` on either side runs over SSH (SFTP). Every feature comes along: incremental skip-unchanged re-runs, `--checksum`, `--mirror`, `--dry-run` itemization, the space guard, crash-safe publication. It shells out to your own `ssh`, so `~/.ssh/config`, agents, `ProxyJump`, and host keys work exactly as they already do. There is not one SSH option to configure. Connections follow the work. An sftp-server answers one request at a time. Basicopy gives each concurrently-transferred file its own connection (dialed on demand, capped at 16) instead of queuing them behind each other. That is what keeps files that are slow to *open* — OneDrive/Dropbox placeholders downloaded on first read, cold storage — from arriving strictly one. This holds at a time. See [docs/ssh.md](docs/ssh.md).
 - **Device-aware.** It classifies the source and destination as SSD or HDD (Linux: `/sys/.../queue/rotational`, `/proc/diskstats`) and seeds concurrency accordingly — conservative on spinning disks (which hate seek-thrash), generous on SSD/NVMe (which need queue depth to fill).
-- **Fast copy primitives.** On Linux it prefers. That Linux is in order: a whole-file reflink clone (`FICLONE`, instant on btrfs/XFS-reflink), a sparse-aware copy that preserves holes (`SEEK_DATA`/`SEEK_HOLE`), `copy_file_range` (in-kernel / NFS server-side copy), then a buffered fallback. Other platforms use the buffered path.
+- **Fast copy primitives.** On Linux the order is: a whole-file reflink clone (`FICLONE`, instant on btrfs/XFS-reflink), then an extent-aware copy for a source with shared (deduplicated) extents. Next come a sparse-aware copy that keeps holes, `copy_file_range` (in-kernel / NFS server-side copy), and a buffered fallback. Other platforms use the buffered path.
 - **Robust like robocopy.** Per-file error isolation (one bad file never aborts the run), transient-error retries with backoff, crash-safe writes (temp file + atomic rename — a kill never leaves a corrupt file at the last path). A no-progress watchdog (aborts a stalled non-interactive run after 30 s. Prompts on a TTY). Aborts (Ctrl-C, the watchdog, a full destination) take effect mid-file: in-flight copies stop at the next chunk instead of finishing a multi-gigabyte file first. Leave no partial destination files behind.
 
 ## Install / build
@@ -42,6 +42,7 @@ go-toolchain            # tidy, test, build -> ./build/basicopy
 | Recursion | on | — |
 | Auto-scaling | always on | `--max-threads N` caps the ceiling |
 | Reflink / clone when possible | on | — |
+| Shared source extents copied once, cloned after that (`FICLONERANGE`) | on | — |
 | Crash-safe temp + atomic rename | on | — |
 | Auto-create target dirs (stderr notice) | on | `--no-auto-mkdirs` |
 | Metadata preserve (mode/times/owner/xattr/Linux ACL) | on | `--no-preserve` |
