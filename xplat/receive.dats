@@ -1,5 +1,5 @@
 # The receiving half of the cross-host check. $XPLAT_IN holds one directory per sending host, as produce.dats left it.
-# A manifest from another host carries data and whole-second mtimes only. Its mode spelling is that host's own.
+# A manifest from another host is compared on data and exact mtimes. Its mode spelling is that host's own.
 tests:
 	- desc: the {matrix.origin} copy holds the same bytes as this host's fixture
 	  matrix:

@@ -253,9 +253,9 @@ switch (cmd) {
 	case 'verify': {
 		const [m, d] = args;
 		if (!m || !d) die('verify: MANIFEST and DIR are required');
-		// A manifest from another host carries its own mode spelling, so only data and the whole-second mtime travel.
+		// A manifest from another host carries its own mode spelling, so modes never compare.
 		const want = JSON.parse(fs.readFileSync(m, 'utf8'));
-		report(diff(want, snap(d), { noMode: true, mtimeSec: true, ...flags(args) }), want.length);
+		report(diff(want, snap(d), { ...flags(args), noMode: true }), want.length);
 		break;
 	}
 	case 'hardlinks': {
