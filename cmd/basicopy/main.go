@@ -4,13 +4,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/wow-look-at-my/basicopy/internal/engine"
+	"github.com/wow-look-at-my/basicopy/internal/interrupt"
 	"github.com/wow-look-at-my/basicopy/internal/options"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
 )
 
 var (
@@ -90,11 +92,30 @@ func init() {
 	f.StringVar(&opts.Progress, "progress", "auto", "progress display: auto|always|never")
 }
 
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+// exitInterrupted is the shell convention for a run that SIGINT stopped.
+const exitInterrupted = 130
 
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := make(chan os.Signal, 2)
+	interrupt.Notify(sigs)
+	go func() {
+		// The first signal stops new work and the run finishes its queue. The second quits now.
+		<-sigs
+		cancel()
+		<-sigs
+		vfs.KillAll()
+		fmt.Fprintln(os.Stderr, "\nbasicopy: interrupted; quit without finishing the queue")
+		os.Exit(exitInterrupted)
+	}()
+
+	err := rootCmd.ExecuteContext(ctx)
+	if errors.Is(err, engine.ErrInterrupted) {
+		fmt.Fprintln(os.Stderr, "basicopy: interrupted; files not yet queued were not copied")
+		os.Exit(exitInterrupted)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "basicopy:", err)
 		os.Exit(1)
 	}

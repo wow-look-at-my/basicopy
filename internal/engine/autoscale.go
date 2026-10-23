@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"runtime"
 	"time"
 
@@ -20,7 +19,7 @@ var (
 // runController is the auto-scaling loop. It seeds the worker limit from the
 // device class, then each tick measures achieved throughput plus the CPU. And
 // device-util guard signals and lets the controller resize the gate.
-func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
+func (r *runner) runController(stop <-chan struct{}) {
 	dstInfo := r.probeDevice(r.localDestProbe())
 	srcInfo := r.probeDevice(r.localSourceProbe())
 	rotational := dstInfo.Rotational() || srcInfo.Rotational()
@@ -47,8 +46,6 @@ func (r *runner) runController(ctx context.Context, stop <-chan struct{}) {
 
 	for {
 		select {
-		case <-ctx.Done():
-			return
 		case <-stop:
 			return
 		case <-connTicker.C:

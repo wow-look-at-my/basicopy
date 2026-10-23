@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"os"
@@ -46,14 +45,12 @@ func (r *runner) progressCount() int64 {
 
 // runWatchdog watches for a total lack of forward progress and, after stallTimeout,
 // aborts (non-TTY) or prompts the user (TTY).
-func (r *runner) runWatchdog(ctx context.Context, stop <-chan struct{}) {
+func (r *runner) runWatchdog(stop <-chan struct{}) {
 	det := &stallDetector{timeout: stallTimeout}
 	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ctx.Done():
-			return
 		case <-stop:
 			return
 		case now := <-ticker.C:

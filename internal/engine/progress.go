@@ -2,7 +2,6 @@ package engine
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"math"
 	"os"
@@ -32,7 +31,7 @@ func (r *runner) progressEnabled() bool {
 	}
 }
 
-func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
+func (r *runner) runProgress(stop <-chan struct{}) {
 	if !r.progressEnabled() {
 		return
 	}
@@ -45,9 +44,6 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 
 	for {
 		select {
-		case <-ctx.Done():
-			r.clearProgressLine()
-			return
 		case <-stop:
 			r.clearProgressLine()
 			return

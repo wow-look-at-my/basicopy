@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -11,7 +12,8 @@ import (
 
 func run(cmd *cobra.Command, o *options.Options) error {
 	sum, err := engine.Run(cmd.Context(), o)
-	if err != nil {
+	interrupted := errors.Is(err, engine.ErrInterrupted)
+	if err != nil && !interrupted {
 		return err
 	}
 	switch {
@@ -32,6 +34,9 @@ func run(cmd *cobra.Command, o *options.Options) error {
 		fmt.Fprintf(cmd.OutOrStdout(),
 			"basicopy: %d files, %d dirs, %d symlinks, %d hardlinks, %d updated%s, %s; %d skipped, %d failed\n",
 			sum.Files, sum.Dirs, sum.Symlinks, sum.Linked, sum.Updated, extra, humanBytes(sum.Bytes), sum.Skipped, sum.Failed)
+	}
+	if interrupted {
+		return err
 	}
 	if sum.Failed > 0 {
 		return fmt.Errorf("%d item(s) failed", sum.Failed)
