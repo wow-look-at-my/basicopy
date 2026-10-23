@@ -149,9 +149,16 @@ function snap(root) {
 	return out;
 }
 
+// The fields each --only name keeps, beside path and type.
+const fieldSets = { data: ['size', 'sha256', 'link'], mtime: ['mtimeNs'], mode: ['mode'], hardlink: ['hardlink'] };
+
 function diff(a, b, opt) {
 	const strip = (e) => {
-		const c = { ...e };
+		let c = { ...e };
+		if (opt.only) {
+			const keep = ['path', 'type', ...opt.only.flatMap((f) => fieldSets[f] ?? die(`unknown --only field '${f}'`))];
+			c = Object.fromEntries(Object.entries(c).filter(([k]) => keep.includes(k)));
+		}
 		if (opt.data) {
 			delete c.mtimeNs;
 			delete c.mode;
@@ -188,6 +195,7 @@ function flags(args) {
 		mtimeSec: args.includes('--mtime-sec'),
 		noDirMtime: args.includes('--no-dir-mtime'),
 		noMode: args.includes('--no-mode'),
+		only: args.find((x) => x.startsWith('--only='))?.slice('--only='.length).split(','),
 	};
 }
 
@@ -217,7 +225,7 @@ const [cmd, ...args] = process.argv.slice(2);
 switch (cmd) {
 	case 'make':
 		make(args[0] ?? die('make: DIR is required'));
-		console.log(`made ${snap(args[0]).length} entries`);
+		console.error(`made ${snap(args[0]).length} entries`);
 		break;
 	case 'snap':
 		console.log(JSON.stringify(snap(args[0] ?? die('snap: DIR is required')), null, '\t'));
@@ -252,11 +260,24 @@ switch (cmd) {
 		else console.log(`${host} sparse: ${st.blocks * 512n < st.size / 2n ? 'holes kept' : 'filled'}`);
 		break;
 	}
+	case 'entry': {
+		const [d, rel] = args;
+		const e = snap(path.dirname(path.join(d, rel))).find((x) => x.path === path.basename(rel).normalize('NFC'));
+		console.log(e ? JSON.stringify({ ...e, path: rel }) : `${rel} absent`);
+		break;
+	}
 	case 'xattr':
 		xattr(args[0], args[1], args[2], args[3]);
 		break;
 	case 'touch':
 		setMtime(args[0], BigInt(Date.parse(args[1])) * 1_000_000n);
+		break;
+	case 'chmod':
+		// node maps the owner write bit onto the read-only attribute on Windows.
+		fs.chmodSync(args[0], parseInt(args[1], 8));
+		break;
+	case 'write':
+		fs.writeFileSync(args[0], args[1]);
 		break;
 	case 'host':
 		console.log(host);
