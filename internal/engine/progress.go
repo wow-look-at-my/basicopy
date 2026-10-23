@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -54,9 +57,7 @@ func (r *runner) runProgress(ctx context.Context, stop <-chan struct{}) {
 				rate = 0.4*float64(nb-prevBytes)/dt + 0.6*rate
 			}
 			prevBytes, prevTime = nb, now
-			r.outMu.Lock()
-			fmt.Fprintf(r.stderr, "\r\033[K%s", r.progressLine(nb, rate, now))
-			r.outMu.Unlock()
+			r.drawProgress(r.progressLine(nb, rate, now))
 		}
 	}
 }
@@ -116,10 +117,40 @@ func (r *runner) averageRate(moved int64, now time.Time) float64 {
 	return 0
 }
 
+func (r *runner) drawProgress(line string) {
+	r.outMu.Lock()
+	r.progress = line
+	fmt.Fprintf(r.stderr, "\r\033[K%s", line)
+	r.outMu.Unlock()
+}
+
 func (r *runner) clearProgressLine() {
 	r.outMu.Lock()
+	r.progress = ""
 	fmt.Fprint(r.stderr, "\r\033[K")
 	r.outMu.Unlock()
+}
+
+// lineWriter hands each complete line written to it to r.printLine on stderr.
+type lineWriter struct {
+	r   *runner
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		line := strings.TrimRight(string(w.buf[:i]), "\r")
+		w.buf = w.buf[i+1:]
+		w.r.printLine(w.r.stderr, "%s", line)
+	}
 }
 
 func fmtBytes(n int64) string {
