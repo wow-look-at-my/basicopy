@@ -6,7 +6,7 @@ An auto-scaling, robocopy-grade file copier, local or over SSH. See `README.md` 
 
 basicopy exists because `robocopy /MT:n` makes you *guess* a thread count and `rsync` makes you assemble a flag soup. **A tuning flag is a bug report against the controller.** If a setting can be measured, it MUST be measured — at runtime, on the live signal, with no user involvement.
 
-- **Not fully automatic is not an optimization.** A performance option the user has to discover, understand, and set correctly is a waste of everyone's time: almost nobody sets it. The people who do mostly set it wrong, and it exists only because the automatic path was not written. Write the automatic path.
+- **Not fully automatic is not an optimization.** A performance option the user has to find, understand, and set correctly is a waste of everyone's time: almost nobody sets it. The people who do mostly set it incorrect, and it exists only because the automatic path was not written. Write the automatic path.
 - **"Add a flag for it" is never the answer** to "this is faster in some situations". Find the signal that distinguishes those situations, feed it to the controller, and let the loop decide (throughput plateau is usually it).
 - **The existing flags are not precedent.** `--max-threads` and `--buffer` are *ceilings and escape hatches* for shared machines, not tuning dials, and the list does not grow. Behavior flags (`--mirror`, `--checksum`, `--dry-run`) say *what to do*, not *how fast to do it*.
 - **No environment variables, no config file, no `-o` passthrough** for performance either — same rule, different spelling.
@@ -14,7 +14,7 @@ basicopy exists because `robocopy /MT:n` makes you *guess* a thread count and `r
 
 ## Build & test
 
-Always use `go-toolchain` (no bare `go` commands). Run it with no arguments from the repo root — it handles mod tidy, vet, tests with coverage (80% minimum), and builds the binary to `./build/basicopy`.
+Always use `go-toolchain` (no bare `go` commands). Run it with no arguments from the repo root. It handles mod tidy, vet, tests with coverage (80% minimum), and builds the binary to `./build/basicopy`.
 
 ```sh
 go-toolchain
@@ -59,7 +59,7 @@ Platform-specific code is build-tagged (`*_linux.go`, `*_unix.go`, `*_other.go`)
 - **The controller is the heart.** `control.Controller` consumes `Sample`s (throughput + optional CPU/util guards) and returns the worker limit `W`. Throughput plateau is the primary signal (it is the only one present for disk, bus/link, and CPU bottlenecks alike), CPU and HDD `%util` only *gate growth*. At the plateau it trims to the minimum `W` that still holds the plateau peak. It is pure so it can be unit-tested deterministically.
 - **The gate** (`engine/gate.go`) is a resizable concurrency limiter. The controller calls `setLimit` each tick. A fixed pool of workers acquires it per job, so scaling does not churn goroutines.
 - **Walk vs workers.** Directory creation, symlink handling, hardlink detection, and exclude/one-file-system decisions happen on the walk goroutine (no locking). File copies — and the per-file skip-unchanged check, so --checksum hashing parallelizes instead of serializing on the walk — run on the pool. Directory metadata and hardlinks are applied after all copies so file writes do not clobber dir mtimes and link targets exist.
-- **Crash safety:** every file is written to a temp file in the destination directory and atomically renamed. An interrupted run never leaves a corrupt file at the final path.
+- **Crash safety:** every file is written to a temp file in the destination directory and atomically renamed. An interrupted run never leaves a corrupt file at the last path.
 - **One code path, kinds of filesystem.** Nothing outside `vfs` calls `os.*` or `filepath.*` on a copy path: each side of a copy carries a `vfs.FS` (which also supplies the path helpers, POSIX for remote). Adding a capability means adding it once.
 - **One connection per concurrent transfer.** An sftp-server answers one request at a time, so transfers sharing a connection run in sequence on the far side. `vfs.remoteFS` dials on demand (cap 16, first connection reserved for metadata). Restraint comes from `W`, which is already measured. `docs/ssh.md`.
 - **`--move`** (`engine/move.go`): one rename per root when the target name is free on the same host, else copy and record each finished source entry. The removal pass runs after `--mirror`, which reads the source.

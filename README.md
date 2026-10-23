@@ -2,7 +2,9 @@
 
 An auto-scaling, robocopy-grade file copier — local disks or over SSH.
 
-`rsync` is single-threaded, fragile, and version-sensitive. `robocopy` is robust and multithreaded but Windows-only and makes you *guess* a thread count (`/MT:n`). `rclone` is overkill for local copies. **basicopy** is the missing tool. It copies a tree as fast as the hardware allows. That tree is **tuning its own parallelism automatically** to saturate the slowest link in the chain — disk, bus, or connection — without bogging the system down. CPU and RAM are explicitly *not* what it tries to saturate.
+`rsync` is single-threaded, fragile, and version-sensitive. `robocopy` is robust and multithreaded but Windows-only and makes you *guess* a thread count (`/MT:n`). `rclone` is overkill for local copies. **basicopy** is the missing tool. It copies a tree as fast as the hardware allows. That tree tuns its own parallelism automatically** to saturate the slowest link in the chain — disk, bus, or connection — without bogging the system down.
+
+CPU and RAM are explicitly *not* what it tries to saturate.
 
 ```
 basicopy SRC...  --target-dir DIR      # copy each SRC under DIR as DIR/<basename>
@@ -23,7 +25,7 @@ basicopy myotherpc:/home/mhayine/whatever --target-dir ./local
 - **Remote copies are just copies.** `host:/path` on either side runs over SSH (SFTP). Every feature comes along: incremental skip-unchanged re-runs, `--checksum`, `--mirror`, `--dry-run` itemization, the space guard, crash-safe publication. It shells out to your own `ssh`, so `~/.ssh/config`, agents, `ProxyJump`, and host keys work exactly as they already do. There is not one SSH option to configure. Connections follow the work. An sftp-server answers one request at a time. Basicopy gives each concurrently-transferred file its own connection (dialed on demand, capped at 16) instead of queuing them behind each other. That is what keeps files that are slow to *open* — OneDrive/Dropbox placeholders downloaded on first read, cold storage — from arriving strictly one. This holds at a time. See [docs/ssh.md](docs/ssh.md).
 - **Device-aware.** It classifies the source and destination as SSD or HDD (Linux: `/sys/.../queue/rotational`, `/proc/diskstats`) and seeds concurrency accordingly — conservative on spinning disks (which hate seek-thrash), generous on SSD/NVMe (which need queue depth to fill).
 - **Fast copy primitives.** On Linux it prefers. That Linux is in order: a whole-file reflink clone (`FICLONE`, instant on btrfs/XFS-reflink), a sparse-aware copy that preserves holes (`SEEK_DATA`/`SEEK_HOLE`), `copy_file_range` (in-kernel / NFS server-side copy), then a buffered fallback. Other platforms use the buffered path.
-- **Robust like robocopy.** Per-file error isolation (one bad file never aborts the run), transient-error retries with backoff, crash-safe writes (temp file + atomic rename — a kill never leaves a corrupt file at the final path). A no-progress watchdog (aborts a stalled non-interactive run after 30 s. Prompts on a TTY). Aborts (Ctrl-C, the watchdog, a full destination) take effect mid-file: in-flight copies stop at the next chunk instead of finishing a multi-gigabyte file first. Leave no partial destination files behind.
+- **Robust like robocopy.** Per-file error isolation (one bad file never aborts the run), transient-error retries with backoff, crash-safe writes (temp file + atomic rename — a kill never leaves a corrupt file at the last path). A no-progress watchdog (aborts a stalled non-interactive run after 30 s. Prompts on a TTY). Aborts (Ctrl-C, the watchdog, a full destination) take effect mid-file: in-flight copies stop at the next chunk instead of finishing a multi-gigabyte file first. Leave no partial destination files behind.
 
 ## Install / build
 
@@ -108,7 +110,7 @@ would hardlink DEST/h1.bin => DEST/h0.bin
 would delete DEST/stale.txt                  # --mirror only
 ```
 
-An unchanged file whose mode/owner drifted (or, with `--checksum`, whose mtime drifted while the content is verifiably identical) is repaired in place instead of staying wrong forever, and counted as "updated" in the summary. Unchanged entries stay silent unless `--verbose` (`skip unchanged ...`).
+An unchanged file whose mode/owner drifted (or, with `--checksum`, whose mtime drifted while the content is verifiably same) is repaired in place instead of staying incorrect forever, and counted as "updated" in the summary. Unchanged entries stay silent unless `--verbose` (`skip unchanged ...`).
 
 ### Moving
 
@@ -144,7 +146,7 @@ The destination is always explicit — there is no positional `DST` and no trail
 - Native fast-copy primitives on macOS (`clonefile`) and Windows (`CopyFileEx`, ReFS block clone) and their device classification.
 - `O_DIRECT` (page-cache-bypassing) reads/writes — needs aligned-buffer handling before it is worth a flag — and `posix_fadvise`/`sync_file_range` page-cache hints for the buffered path.
 - Native ACL preservation outside Linux.
-- Live JSON progress events (only the final `--json` summary is emitted today).
+- Live JSON progress events (only the last `--json` summary is emitted today).
 - Device and special files (mknod): skipped with a stderr note.
 
 See `internal/` for the implementation: `engine` (orchestration + workers), `control` (the auto-scaling controller), `device`/`sysload` (signal sources), `fsx` (copy primitives), `scan` (reason-coded skip-unchanged compare), `vfs` (local and SSH/SFTP filesystems). `walk`-style traversal lives in `engine`.
