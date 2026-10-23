@@ -74,6 +74,26 @@ jobs:
           chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
           mkdir -p "$XPLAT_OUT"
           ./build/dats.exe -v --no-sandbox test dats/data.dats dats/metadata.dats xplat/produce.dats
+      # Temporary: the hand-off's tar crashes on this tree on Windows, and this names the entry it cannot archive.
+      - name: Probe the hand-off tar here
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          p="$PWD/build/tarprobe"
+          rm -rf "$p"; mkdir -p "$p"
+          probe() {
+            if tar -c -f "$p/out.tar" -C "$1" . >/dev/null 2>&1; then echo "tar archives $2"; else echo "tar FAILS on $2"; fi
+            rm -f "$p/out.tar"
+          }
+          mkdir -p "$p/plain"; echo hi > "$p/plain/a.txt"; probe "$p/plain" plain-file
+          mkdir -p "$p/filelink"; echo hi > "$p/filelink/t.txt"; ln -s t.txt "$p/filelink/s"; probe "$p/filelink" file-symlink
+          mkdir -p "$p/dangling"; ln -s no-such-target "$p/dangling/s"; probe "$p/dangling" dangling-symlink
+          mkdir -p "$p/dirlink/real"; ln -s real "$p/dirlink/s"; probe "$p/dirlink" dir-symlink
+          mkdir -p "$p/unicode"; echo hi > "$p/unicode/rocket.txt"; probe "$p/unicode" plain-name
+          mkdir -p "$p/hard"; echo hi > "$p/hard/a"; ln "$p/hard/a" "$p/hard/b"; probe "$p/hard" hardlink-pair
+          mkdir -p "$p/readonly"; echo hi > "$p/readonly/r.txt"; chmod 444 "$p/readonly/r.txt"; probe "$p/readonly" read-only-file
+          probe "$XPLAT_OUT/tree" the-fixture-tree
+          probe "$XPLAT_OUT" the-hand-off-directory
       - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: send
