@@ -31,7 +31,7 @@ jobs:
       - name: Stage the binary for the other hosts
         shell: bash
         run: mkdir -p build/handoff && cp build/basicopy build/handoff/basicopy
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: send
           name: basicopy
@@ -55,7 +55,7 @@ jobs:
         uses: wow-look-at-my/actions@cached-apt#latest
         with:
           packages: attr
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: receive
           name: basicopy
@@ -74,7 +74,7 @@ jobs:
           chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
           mkdir -p "$XPLAT_OUT"
           ./build/dats.exe -v --no-sandbox test dats/data.dats dats/metadata.dats xplat/produce.dats
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: send
           name: xplat-${{ matrix.host }}
@@ -94,22 +94,22 @@ jobs:
       XPLAT_IN: build/xplat-in
     steps:
       - uses: actions/checkout@v4
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: receive
           name: basicopy
           path: build/bin
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: receive
           name: xplat-linux
           path: build/xplat-in/linux
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: receive
           name: xplat-darwin
           path: build/xplat-in/darwin
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@master
+      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: receive
           name: xplat-windows
