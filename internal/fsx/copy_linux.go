@@ -3,6 +3,7 @@
 package fsx
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"syscall"
@@ -15,7 +16,7 @@ import (
 //
 //	FICLONE whole-file reflink — instant, shares extents (same-fs CoW: btrfs,
 //	   XFS-reflink, bcachefs). Independent inode/metadata; just storage-shared.
-//	   Sparse-aware copy (SEEK_DATA/SEEK_HOLE) — preserves holes for sparse files.
+//	   Sparse-aware copy (all-zero blocks skipped) — preserves holes for sparse files.
 func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error) {
 	if info == nil {
 		return plainCopy(dst, src, o)
@@ -34,9 +35,7 @@ func copyData(dst, src *os.File, info os.FileInfo, o CopyOptions) (int64, error)
 	}
 
 	if isSparse(info) {
-		if n, ok, err := copySparse(dst, src, size, o); ok {
-			return n, err
-		}
+		return copySparse(dst, src, o)
 	}
 
 	if n, ok, err := copyFileRange(dst, src, size, o); ok {
@@ -94,11 +93,16 @@ func copyFileRange(dst, src *os.File, size int64, o CopyOptions) (copied int64, 
 	return copied, true, nil
 }
 
-// copySparse copies a file while preserving its holes, using SEEK_DATA/SEEK_HOLE
-// to find data regions and skipping the gaps. ok=false (returned before any
-// write) means the filesystem doesn't support hole-seeking and the caller should
-// fall back. On success it returns the logical size.
-func copySparse(dst, src *os.File, size int64, o CopyOptions) (copied int64, ok bool, err error) {
+// sparseBlock is the unit of hole detection: an all-zero block is not written, so it stays a hole in the destination.
+const sparseBlock = 4096
+
+var zeroBlock [sparseBlock]byte
+
+// copySparse reads every byte of src and writes only the blocks that are not
+// all zeros, so holes survive. It never trusts SEEK_DATA or the walk-time size.
+// A cloud placeholder over SMB or FUSE reports no data extents but reads real
+// bytes, and a source can shrink after the walk.
+func copySparse(dst, src *os.File, o CopyOptions) (int64, error) {
 	bufSize := o.BufSize
 	if bufSize <= 0 {
 		bufSize = DefaultBufSize
@@ -106,60 +110,57 @@ func copySparse(dst, src *os.File, size int64, o CopyOptions) (copied int64, ok 
 	bp := getBuf(bufSize)
 	defer putBuf(bp)
 	buf := *bp
-	srcFd := int(src.Fd())
 
 	var offset int64
-	for offset < size {
-		dataStart, e := unix.Seek(srcFd, offset, unix.SEEK_DATA)
-		if e != nil {
-			if e == unix.ENXIO {
-				break // no more data; the remainder is a hole
-			}
-			return 0, false, nil // SEEK_DATA unsupported -> fall back
+	for {
+		if o.canceled() {
+			return offset, ErrCanceled
 		}
-		holeStart, e := unix.Seek(srcFd, dataStart, unix.SEEK_HOLE)
-		if e != nil || holeStart > size {
-			holeStart = size
-		}
-		if _, e := unix.Seek(srcFd, dataStart, unix.SEEK_SET); e != nil {
-			return copied, true, e
-		}
-		if _, e := dst.Seek(dataStart, io.SeekStart); e != nil {
-			return copied, true, e
-		}
-		remaining := holeStart - dataStart
-		for remaining > 0 {
-			if o.canceled() {
-				return copied, true, ErrCanceled
+		nr, rerr := src.Read(buf)
+		if nr > 0 {
+			if err := writeNonZero(dst, buf[:nr], offset); err != nil {
+				return offset, err
 			}
-			r := int64(bufSize)
-			if r > remaining {
-				r = remaining
-			}
-			nr, rerr := src.Read(buf[:r])
-			if nr > 0 {
-				if _, werr := dst.Write(buf[:nr]); werr != nil {
-					return copied, true, werr
-				}
-				copied += int64(nr)
-				remaining -= int64(nr)
-				if o.Progress != nil {
-					o.Progress(int64(nr))
-				}
-			}
-			if rerr == io.EOF {
-				break
-			}
-			if rerr != nil {
-				return copied, true, rerr
+			offset += int64(nr)
+			if o.Progress != nil {
+				o.Progress(int64(nr))
 			}
 		}
-		offset = holeStart
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return offset, rerr
+		}
 	}
 
-	// Set the exact size so a trailing hole is represented and length is correct.
-	if e := dst.Truncate(size); e != nil {
-		return copied, true, e
+	// The length is what read() returned, so a trailing hole gets its true size.
+	if err := dst.Truncate(offset); err != nil {
+		return offset, err
 	}
-	return size, true, nil
+	return offset, nil
+}
+
+// writeNonZero writes p at off, one run of non-zero blocks at a time.
+func writeNonZero(dst *os.File, p []byte, off int64) error {
+	runStart := -1
+	for i := 0; i < len(p); i += sparseBlock {
+		end := min(i+sparseBlock, len(p))
+		zero := bytes.Equal(p[i:end], zeroBlock[:end-i])
+		if !zero && runStart < 0 {
+			runStart = i
+		}
+		if zero && runStart >= 0 {
+			if _, err := dst.WriteAt(p[runStart:i], off+int64(runStart)); err != nil {
+				return err
+			}
+			runStart = -1
+		}
+	}
+	if runStart >= 0 {
+		if _, err := dst.WriteAt(p[runStart:], off+int64(runStart)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
