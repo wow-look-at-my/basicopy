@@ -74,7 +74,9 @@ jobs:
           chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
           mkdir -p "$XPLAT_OUT"
           ./build/dats.exe -v --no-sandbox test dats/data.dats dats/metadata.dats xplat/produce.dats
-      - uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
+      # A failed suite on this host is its own finding. The other hosts still copy what this one produced.
+      - if: ${{ !cancelled() }}
+        uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb
         with:
           mode: send
           name: xplat-${{ matrix.host }}
@@ -83,6 +85,7 @@ jobs:
   # Each host copies the tree every host sent, so a difference between hosts shows up as a named pair.
   cross-host:
     needs: every-host
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
