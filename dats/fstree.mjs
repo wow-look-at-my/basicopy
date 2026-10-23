@@ -213,8 +213,14 @@ function xattr(op, file, name, value) {
 	}
 	if (host === 'darwin') {
 		if (op === 'set') return execFileSync('xattr', ['-w', `user.${name}`, value, file]);
-		const out = execFileSync('xattr', ['-p', `user.${name}`, file], { encoding: 'utf8' });
-		return console.log(`${host} ${name}=${out.trim()}`);
+		try {
+			const out = execFileSync('xattr', ['-p', `user.${name}`, file], { encoding: 'utf8' });
+			return console.log(`${host} ${name}=${out.trim()}`);
+		} catch {
+			// The named attribute is missing, so say what the copy holds instead. A renamed one is a bug here, none is a bug in the copy.
+			const held = execFileSync('xattr', ['-l', file], { encoding: 'utf8' }).trim().replace(/\n/g, ' ');
+			return console.log(`${host} ${name} absent, copy holds: ${held || 'nothing'}`);
+		}
 	}
 	// NTFS keeps named data in an alternate data stream, the nearest thing it has to an xattr.
 	const stream = `${file}:${name}`;
