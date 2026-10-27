@@ -118,10 +118,13 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		go func() { defer r.bgWg.Done(); r.runProgress(stopBg) }()
 	}
 
+	r.prefetch = newListingPrefetcher()
+	r.prefetch.start()
 	r.scanning.Store(true)
 	err := r.walk(ctx)
 
 	r.scanning.Store(false)
+	r.prefetch.close()
 	r.jobs.close()
 	if !opts.DryRun {
 		r.wg.Wait()
@@ -185,9 +188,10 @@ type runner struct {
 	targetDir  string
 	targetFile string
 
-	gate *gate
-	jobs *queue[fileJob]
-	wg   sync.WaitGroup // copy workers
+	gate     *gate
+	jobs     *queue[fileJob]
+	wg       sync.WaitGroup // copy workers
+	prefetch *listingPrefetcher
 
 	metaJobs *queue[*dirState]
 	metaWg   sync.WaitGroup // directory metadata workers
