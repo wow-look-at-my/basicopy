@@ -100,13 +100,8 @@ func setXattr(path, name string, value []byte, nofollow bool) error {
 	return unix.Setxattr(path, name, value, 0)
 }
 
-// ignorableXattrErr: ENOTSUP and EOPNOTSUPP mean the filesystem has no xattrs.
-// ENOSYS is not in the list. It means the call itself is missing, and the
-// attributes stay on the source without a report.
+// ignorableXattrErr: ENOTSUP, EOPNOTSUPP, ENOSYS (OpenZFS on macOS, every call on NT) mean no xattrs.
 func ignorableXattrErr(err error) bool {
-	if errors.Is(err, unix.ENOSYS) {
-		return false
-	}
 	return errors.Is(err, errors.ErrUnsupported) ||
 		errors.Is(err, unix.ENODATA) ||
 		os.IsPermission(err)

@@ -53,18 +53,12 @@ var unsupportedErrnos = map[string]error{
 	"ENOSYS":     unix.ENOSYS,
 }
 
-// noXattrErrnos are the errnos a filesystem with no xattrs answers.
-var noXattrErrnos = map[string]error{
-	"ENOTSUP":    unix.ENOTSUP,
-	"EOPNOTSUPP": unix.EOPNOTSUPP,
-}
-
 var xattrOps = []string{"list", "get", "set"}
 
 // TestUnsupportedXattrsAreNoXattrs: a filesystem that does not implement xattrs,
 // on either side, has none to preserve. The copy succeeds silently.
 func TestUnsupportedXattrsAreNoXattrs(t *testing.T) {
-	for errName, errno := range noXattrErrnos {
+	for errName, errno := range unsupportedErrnos {
 		for _, op := range xattrOps {
 			t.Run(op+"/"+errName, func(t *testing.T) {
 				failXattr(t, op, errno)
@@ -97,17 +91,9 @@ func TestUnsupportedXattrsAreNoXattrs(t *testing.T) {
 // TestXattrFailureKeepsFileData: any other xattr errno is reported, never
 // swallowed, but a file's copied data is still published.
 func TestXattrFailureKeepsFileData(t *testing.T) {
-	for _, tc := range []struct {
-		op    string
-		errno unix.Errno
-	}{
-		{"list", unix.EIO}, {"get", unix.EIO}, {"set", unix.EIO},
-		// A missing syscall is a failure to report, not a filesystem with no xattrs.
-		{"list", unix.ENOSYS}, {"get", unix.ENOSYS}, {"set", unix.ENOSYS},
-	} {
-		op, errno := tc.op, tc.errno
-		t.Run(op+"/"+errno.Error(), func(t *testing.T) {
-			failXattr(t, op, errno)
+	for _, op := range xattrOps {
+		t.Run(op, func(t *testing.T) {
+			failXattr(t, op, unix.EIO)
 			dir := t.TempDir()
 
 			src := filepath.Join(dir, "src")
@@ -118,7 +104,7 @@ func TestXattrFailureKeepsFileData(t *testing.T) {
 			n, err := CopyFile(vfs.Local, src, vfs.Local, dst, info, CopyOptions{Preserve: true})
 			var me *MetaError
 			require.ErrorAs(t, err, &me)
-			assert.ErrorIs(t, err, errno)
+			assert.ErrorIs(t, err, unix.EIO)
 			assert.Equal(t, dst, me.Path)
 			assert.Equal(t, int64(7), n)
 			got, err := os.ReadFile(dst)
@@ -131,7 +117,7 @@ func TestXattrFailureKeepsFileData(t *testing.T) {
 			require.NoError(t, os.Mkdir(dstDir, 0o700))
 			dinfo, err := os.Lstat(srcDir)
 			require.NoError(t, err)
-			assert.ErrorIs(t, ApplyMeta(vfs.Local, srcDir, vfs.Local, dstDir, dinfo, true), errno)
+			assert.ErrorIs(t, ApplyMeta(vfs.Local, srcDir, vfs.Local, dstDir, dinfo, true), unix.EIO)
 		})
 	}
 }
@@ -148,11 +134,11 @@ func TestUnsupportedMetadataErrnos(t *testing.T) {
 
 // TestIgnorableXattrErr pins exactly which errno classes mean "no xattrs".
 func TestIgnorableXattrErr(t *testing.T) {
-	for name, errno := range noXattrErrnos {
+	for name, errno := range unsupportedErrnos {
 		assert.True(t, ignorableXattrErr(errno), name)
 		assert.True(t, ignorableXattrErr(&os.PathError{Op: "listxattr", Path: "p", Err: errno}), name+" wrapped")
 	}
-	for _, errno := range []error{unix.ENOSYS, &os.PathError{Op: "listxattr", Path: "p", Err: unix.ENOSYS}, unix.EIO, unix.ENOENT, unix.EINVAL, unix.ENOSPC, unix.ERANGE, errors.New("x")} {
+	for _, errno := range []error{unix.EIO, unix.ENOENT, unix.EINVAL, unix.ENOSPC, unix.ERANGE, errors.New("x")} {
 		assert.False(t, ignorableXattrErr(errno), "%v must not be swallowed", errno)
 	}
 }
