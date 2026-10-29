@@ -29,9 +29,11 @@ cmd/basicopy/        cobra CLI (one command per file, self-registering via init(
 internal/
   options/   parsed flags + Validate() + human size parsing (no cobra dependency)
   engine/    orchestration (engine.go) + walking/dispatch/itemized output
-             (walk.go): pipelined walk (dirs/symlinks/hardlinks on the walk
-             goroutine) feeding a worker pool through a resizable gate; plus the
-             autoscale loop, watchdog, retry, progress, and mirror passes
+             (walk.go): pipelined walk (dirs/symlinks/hardlinks and itemization
+             on the walk goroutine, directory listings prefetched through a
+             bounded automatic pool) feeding a worker pool through a resizable
+             gate; plus the autoscale loop, watchdog, retry, progress, and
+             mirror passes
   control/   the auto-scaling controller — pure decision logic (no I/O), tested
              against synthetic throughput curves
   device/    HDD/SSD classification, optimal_io_size, same-spindle id, %util

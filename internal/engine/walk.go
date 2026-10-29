@@ -1,6 +1,7 @@
 // Walking and per-entry dispatch. This is destination resolution for each
 // source, the recursive visit of directories/files/symlinks on the walk
-// goroutine, and per-entry itemization. This also is exclude/include
+// goroutine (directory listings themselves are prefetched through a bounded
+// pool), and per-entry itemization. This also is exclude/include
 // matching, and destination-root setup. Every source carries the filesystem
 // it lives on (srcRoot). A walk over an SSH connection is the same code as a
 // walk over a local directory.
@@ -11,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/wow-look-at-my/basicopy/internal/fsx"
 	"github.com/wow-look-at-my/basicopy/internal/scan"
@@ -170,7 +173,13 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 			return
 		}
 	}
-	entries, err := root.fs.ReadDir(srcDir)
+	entries, err, prefetched := r.prefetch.take(ctx, root.fs, srcDir)
+	if !prefetched {
+		if r.halted(ctx) {
+			return
+		}
+		entries, err = root.fs.ReadDir(srcDir)
+	}
 	if err != nil {
 		r.fail(fmt.Errorf("read dir %s: %w", root.fs.Display(srcDir), err))
 		return
@@ -178,9 +187,20 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 	state := r.newDirState(root.fs, srcDir, dstDir, fi)
 	defer r.closeDir(state)
 	r.dirs.Add(1)
-	for _, cfi := range entries {
+	// Listings for upcoming sibling directories run ahead on the prefetch pool,
+	// so a high-latency filesystem does not charge the walk one round trip per
+	// directory. The window is bounded by the pool size and refills as the walk
+	// consumes entries.
+	ahead := listingPrefetchWorkers()
+	for i := 0; i < len(entries) && i < ahead; i++ {
+		r.prefetchDir(ctx, root, srcDir, entries[i])
+	}
+	for i, cfi := range entries {
 		if r.halted(ctx) {
 			return // a directory with unvisited children must not be removed by --move
+		}
+		if j := i + ahead; j < len(entries) {
+			r.prefetchDir(ctx, root, srcDir, entries[j])
 		}
 		r.visit(ctx, root, root.fs.Join(srcDir, cfi.Name()), r.dfs.Join(dstDir, cfi.Name()), cfi, state)
 	}
@@ -423,4 +443,183 @@ func withinRoot(fsys vfs.FS, rootAbs, targetAbs string) bool {
 		return true
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+fsys.Separator())
+}
+
+// A directory listing on a high-latency filesystem can cost a round trip per
+// directory. The prefetcher keeps that I/O off the serial walk: workers list
+// upcoming child directories ahead of the visitor, which consumes a stored
+// result or lists synchronously when none was scheduled.
+//
+// Only ReadDir runs off the walk goroutine. Entries are published immutable;
+// every ordering-sensitive decision -- itemization, DFS dispatch, hardlink
+// primary choice, symlink tracking, --move recording -- stays on the walk
+// goroutine.
+
+// listingWorkerCount is the automatic ceiling on concurrent directory listings,
+// counting the prefetch pool and the walk's own inline listing. It is a small
+// multiple of GOMAXPROCS with a floor and a hard cap, so the bound never grows
+// with the number of directories.
+func listingWorkerCount() int {
+	n := 4 * runtime.GOMAXPROCS(0)
+	if n < 8 {
+		n = 8
+	}
+	if n > 32 {
+		n = 32
+	}
+	return n
+}
+
+type listingTask struct {
+	fs   vfs.FS
+	path string
+	key  string
+}
+
+type listingResult struct {
+	entries []os.FileInfo
+	err     error
+	done    chan struct{}
+}
+
+type listingPrefetcher struct {
+	mu      sync.Mutex
+	cond    *sync.Cond
+	stack   []listingTask // LIFO: the next sibling the DFS needs is on top
+	results map[string]*listingResult
+	closed  bool
+	wg      sync.WaitGroup
+}
+
+func newListingPrefetcher() *listingPrefetcher {
+	p := &listingPrefetcher{results: map[string]*listingResult{}}
+	p.cond = sync.NewCond(&p.mu)
+	return p
+}
+
+// listingPrefetchWorkers is the pool size: one slot of the ceiling is left free
+// for the walk's own synchronous listing, so total concurrency stays within
+// listingWorkerCount. The lookahead window is the same size, which keeps every
+// scheduled sibling in flight rather than queued behind the one being awaited.
+func listingPrefetchWorkers() int {
+	n := listingWorkerCount() - 1
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+func (p *listingPrefetcher) start() {
+	for i := 0; i < listingPrefetchWorkers(); i++ {
+		p.wg.Add(1)
+		go p.worker()
+	}
+}
+
+func (p *listingPrefetcher) worker() {
+	defer p.wg.Done()
+	for {
+		p.mu.Lock()
+		for len(p.stack) == 0 && !p.closed {
+			p.cond.Wait()
+		}
+		if len(p.stack) == 0 {
+			p.mu.Unlock()
+			return
+		}
+		task := p.stack[len(p.stack)-1]
+		p.stack = p.stack[:len(p.stack)-1]
+		p.mu.Unlock()
+
+		entries, err := task.fs.ReadDir(task.path)
+
+		p.mu.Lock()
+		if res, ok := p.results[task.key]; ok {
+			res.entries, res.err = entries, err
+			close(res.done)
+		}
+		p.mu.Unlock()
+	}
+}
+
+// schedule queues path unless the run is closing. A nil prefetcher (a runner
+// built directly by a test) makes this a no-op, so the visitor lists inline.
+func (p *listingPrefetcher) schedule(fsys vfs.FS, path string) {
+	if p == nil {
+		return
+	}
+	key := fsys.Display(path)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
+	if _, ok := p.results[key]; ok {
+		return
+	}
+	p.results[key] = &listingResult{done: make(chan struct{})}
+	p.stack = append(p.stack, listingTask{fs: fsys, path: path, key: key})
+	p.cond.Signal()
+}
+
+// take consumes a scheduled listing. It waits for a queued task to finish and
+// never blocks on work that was not scheduled. A false second return means the
+// caller must list synchronously; on cancellation it returns false promptly.
+func (p *listingPrefetcher) take(ctx context.Context, fsys vfs.FS, path string) ([]os.FileInfo, error, bool) {
+	if p == nil {
+		return nil, nil, false
+	}
+	key := fsys.Display(path)
+	p.mu.Lock()
+	res, ok := p.results[key]
+	p.mu.Unlock()
+	if !ok {
+		return nil, nil, false
+	}
+	select {
+	case <-res.done:
+	case <-ctx.Done():
+		return nil, nil, false
+	}
+	p.mu.Lock()
+	entries, err := res.entries, res.err
+	delete(p.results, key)
+	p.mu.Unlock()
+	return entries, err, true
+}
+
+// close stops issuing listings, waits for the ones in flight, and drops results
+// the walk never reached.
+func (p *listingPrefetcher) close() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.closed = true
+	p.stack = nil
+	p.mu.Unlock()
+	p.cond.Broadcast()
+	p.wg.Wait()
+	p.mu.Lock()
+	p.results = map[string]*listingResult{}
+	p.mu.Unlock()
+}
+
+// prefetchDir schedules a child directory for an early listing. The walk skips
+// excluded entries and --one-file-system mount points, so those are never
+// listed here.
+func (r *runner) prefetchDir(ctx context.Context, root *srcRoot, srcDir string, fi os.FileInfo) {
+	if !fi.IsDir() || r.halted(ctx) {
+		return
+	}
+	path := root.fs.Join(srcDir, fi.Name())
+	if r.excluded(root, path, true) {
+		return
+	}
+	if r.opts.OneFileSystem && r.rootDevSet {
+		if dev, ok := root.fs.Dev(fi); ok && dev != r.rootDev {
+			return
+		}
+	}
+	r.prefetch.schedule(root.fs, path)
 }
