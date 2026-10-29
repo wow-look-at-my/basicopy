@@ -52,17 +52,37 @@ func copyXattrs(src, dst string, nofollow bool) error {
 	return nil
 }
 
-func listXattrs(path string, nofollow bool) ([]string, error) {
-	size, err := xattrSys.list(path, nil, nofollow)
-	if err != nil || size == 0 {
+// xattrFirstBuf holds almost every name list and value, so one call usually reads it.
+const xattrFirstBuf = 4096
+
+// readXattr calls read with a fixed buffer first, and asks for the size only on ERANGE.
+func readXattr(read func(dest []byte) (int, error)) ([]byte, error) {
+	buf := make([]byte, xattrFirstBuf)
+	n, err := read(buf)
+	if err == nil {
+		return buf[:n], nil
+	}
+	if !errors.Is(err, unix.ERANGE) {
 		return nil, err
 	}
-	buf := make([]byte, size)
-	n, err := xattrSys.list(path, buf, nofollow)
+	size, err := read(nil)
 	if err != nil {
 		return nil, err
 	}
-	parts := bytes.Split(buf[:n], []byte{0})
+	buf = make([]byte, size)
+	n, err = read(buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf[:n], nil
+}
+
+func listXattrs(path string, nofollow bool) ([]string, error) {
+	list, err := readXattr(func(dest []byte) (int, error) { return xattrSys.list(path, dest, nofollow) })
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	parts := bytes.Split(list, []byte{0})
 	names := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if len(p) > 0 {
@@ -80,13 +100,7 @@ func listXattrBytes(path string, dest []byte, nofollow bool) (int, error) {
 }
 
 func getXattr(path, name string, nofollow bool) ([]byte, error) {
-	size, err := xattrSys.get(path, name, nil, nofollow)
-	if err != nil {
-		return nil, err
-	}
-	value := make([]byte, size)
-	_, err = xattrSys.get(path, name, value, nofollow)
-	return value, err
+	return readXattr(func(dest []byte) (int, error) { return xattrSys.get(path, name, dest, nofollow) })
 }
 
 func getXattrBytes(path, name string, dest []byte, nofollow bool) (int, error) {

@@ -3,9 +3,11 @@
 package fsx
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -109,6 +111,41 @@ func TestSkippedXattrIsReported(t *testing.T) {
 			assert.ErrorIs(t, got[0], unix.ENOTSUP)
 		})
 	}
+}
+
+// TestLargeXattrGrowsTheBuffer: a list or a value past the first buffer gets
+// ERANGE, then a size query, then the whole attribute reaches the target.
+func TestLargeXattrGrowsTheBuffer(t *testing.T) {
+	old := xattrSys
+	t.Cleanup(func() { xattrSys = old })
+	name := strings.Repeat("n", xattrFirstBuf) + "\x00"
+	value := bytes.Repeat([]byte("v"), 3*xattrFirstBuf)
+	reply := func(src, dest []byte) (int, error) {
+		if dest == nil {
+			return len(src), nil
+		}
+		if len(dest) < len(src) {
+			return 0, unix.ERANGE
+		}
+		return copy(dest, src), nil
+	}
+	xattrSys.list = func(_ string, dest []byte, _ bool) (int, error) { return reply([]byte(name), dest) }
+	xattrSys.get = func(_, _ string, dest []byte, _ bool) (int, error) { return reply(value, dest) }
+	var gotName string
+	var gotValue []byte
+	xattrSys.set = func(_, attr string, val []byte, _ bool) error {
+		gotName, gotValue = attr, val
+		return nil
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	require.NoError(t, os.WriteFile(src, []byte("payload"), 0o644))
+	info, err := os.Lstat(src)
+	require.NoError(t, err)
+	_, err = CopyFile(vfs.Local, src, vfs.Local, filepath.Join(dir, "dst"), info, CopyOptions{Preserve: true})
+	require.NoError(t, err)
+	assert.Equal(t, strings.TrimSuffix(name, "\x00"), gotName)
+	assert.Equal(t, value, gotValue)
 }
 
 // TestXattrFailureKeepsFileData: any other xattr errno is reported, never
