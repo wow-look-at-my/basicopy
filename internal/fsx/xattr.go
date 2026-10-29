@@ -1,5 +1,7 @@
 //go:build darwin || linux || netbsd
 
+// xattrSys is the extended-attribute syscall seam; tests swap it to inject errnos.
+
 package fsx
 
 import (

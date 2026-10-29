@@ -1,3 +1,5 @@
+// hlPrimary records a multiply-linked inode's earliest destination; adopted means an unchanged file was kept as-is, not recopied.
+
 package engine
 
 import (

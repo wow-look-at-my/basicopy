@@ -1,5 +1,7 @@
 //go:build unix
 
+// retryable reports whether err is a transient I/O error worth retrying after a short backoff (resource contention, interrupted calls, or network-filesystem blips on a mounted share).
+
 package engine
 
 import (

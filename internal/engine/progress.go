@@ -1,3 +1,5 @@
+// progressEnabled reports whether to draw a live progress line.
+
 package engine
 
 import (

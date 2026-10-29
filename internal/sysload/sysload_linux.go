@@ -1,5 +1,7 @@
 //go:build linux
 
+// parseCPULine parses the aggregate "cpu" line of /proc/stat, returning idle time (idle + iowait) and the total of all time fields, in jiffies.
+
 package sysload
 
 import (

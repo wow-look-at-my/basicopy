@@ -1,3 +1,5 @@
+// remoteFS is a host reached over SFTP.
+
 package vfs
 
 import (

@@ -1,5 +1,7 @@
 //go:build linux
 
+// FIEMAP is in linux/fiemap.h.
+
 package fsx
 
 import (

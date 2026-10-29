@@ -1,3 +1,5 @@
+// Dedup remembers where shared source extents landed on the destination, so a later reference to the same extent is cloned there instead of copied again.
+
 package fsx
 
 import (

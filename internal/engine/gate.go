@@ -1,3 +1,5 @@
+// gate is a resizable concurrency limiter; setLimit changes limit live, so a fixed pool need not resize.
+
 package engine
 
 import "sync"

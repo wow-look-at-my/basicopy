@@ -1,5 +1,7 @@
 //go:build !unix
 
+// Off Unix the pre-write space guard is disabled; a full destination still aborts on ENOSPC.
+
 package vfs
 
 import "os"
