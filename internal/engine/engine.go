@@ -76,6 +76,14 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	}
 	r.reg.Diag = &lineWriter{r: r}
 	defer r.reg.Close()
+	fsx.SetXattrSkipReport(func(path, name string, err error) {
+		if name == "" {
+			r.verbose("skip xattrs %s: %v", path, err)
+			return
+		}
+		r.verbose("skip xattr %s on %s: %v", name, path, err)
+	})
+	defer fsx.SetXattrSkipReport(nil)
 	if err := r.resolveTarget(); err != nil {
 		return r.summary(), err
 	}

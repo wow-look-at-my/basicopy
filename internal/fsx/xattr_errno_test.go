@@ -88,6 +88,29 @@ func TestUnsupportedXattrsAreNoXattrs(t *testing.T) {
 	}
 }
 
+// TestSkippedXattrIsReported: a skipped attribute reaches the report with its
+// path and errno, so --verbose can say what the copy left behind.
+func TestSkippedXattrIsReported(t *testing.T) {
+	t.Serial()
+	for _, op := range xattrOps {
+		t.Run(op, func(t *testing.T) {
+			failXattr(t, op, unix.ENOTSUP)
+			var got []error
+			SetXattrSkipReport(func(path, name string, err error) { got = append(got, err) })
+			t.Cleanup(func() { SetXattrSkipReport(nil) })
+			dir := t.TempDir()
+			src := filepath.Join(dir, "src")
+			require.NoError(t, os.WriteFile(src, []byte("payload"), 0o644))
+			info, err := os.Lstat(src)
+			require.NoError(t, err)
+			_, err = CopyFile(vfs.Local, src, vfs.Local, filepath.Join(dir, "dst"), info, CopyOptions{Preserve: true})
+			require.NoError(t, err)
+			require.Len(t, got, 1, "each skip is reported once")
+			assert.ErrorIs(t, got[0], unix.ENOTSUP)
+		})
+	}
+}
+
 // TestXattrFailureKeepsFileData: any other xattr errno is reported, never
 // swallowed, but a file's copied data is still published.
 func TestXattrFailureKeepsFileData(t *testing.T) {

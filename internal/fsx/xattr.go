@@ -27,6 +27,7 @@ func copyXattrs(src, dst string, nofollow bool) error {
 	names, err := listXattrs(src, nofollow)
 	if err != nil {
 		if ignorableXattrErr(err) {
+			xattrSkipped(src, "", err)
 			return nil
 		}
 		return fmt.Errorf("list xattrs on %s: %w", src, err)
@@ -35,12 +36,14 @@ func copyXattrs(src, dst string, nofollow bool) error {
 		value, err := getXattr(src, name, nofollow)
 		if err != nil {
 			if ignorableXattrErr(err) {
+				xattrSkipped(src, name, err)
 				continue
 			}
 			return fmt.Errorf("get xattr %s on %s: %w", name, src, err)
 		}
 		if err := xattrSys.set(dst, name, value, nofollow); err != nil {
 			if ignorableXattrErr(err) {
+				xattrSkipped(dst, name, err)
 				continue
 			}
 			return fmt.Errorf("set xattr %s on %s: %w", name, dst, err)

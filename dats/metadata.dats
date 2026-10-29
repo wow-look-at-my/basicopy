@@ -73,7 +73,7 @@ tests:
 		node dats/fstree.mjs make {outputs.src}
 		node dats/fstree.mjs xattr set {outputs.src}/text/hello.txt basicopy-file filevalue
 		node dats/fstree.mjs xattr set {outputs.src}/deep basicopy-dir dirvalue
-		"$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {outputs.src} --contents --target-dir {outputs.dst} --no-follow-symlinks >/dev/null
+		"$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {outputs.src} --contents --target-dir {outputs.dst} --no-follow-symlinks --verbose 1>&2
 		node dats/fstree.mjs xattr get {outputs.dst}/text/hello.txt basicopy-file
 		node dats/fstree.mjs xattr get {outputs.dst}/deep basicopy-dir
 	  outputs:
