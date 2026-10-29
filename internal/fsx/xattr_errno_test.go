@@ -116,6 +116,7 @@ func TestSkippedXattrIsReported(t *testing.T) {
 // TestLargeXattrGrowsTheBuffer: a list or a value past the first buffer gets
 // ERANGE, then a size query, then the whole attribute reaches the target.
 func TestLargeXattrGrowsTheBuffer(t *testing.T) {
+	t.Serial()
 	old := xattrSys
 	t.Cleanup(func() { xattrSys = old })
 	name := strings.Repeat("n", xattrFirstBuf) + "\x00"
