@@ -1,6 +1,9 @@
-//go:build darwin || linux || netbsd
+//go:build darwin || linux || netbsd || cosmo
 
 // xattrSys is the extended-attribute syscall seam; tests swap it to inject errnos.
+// cosmo is in the tag because the shipped APE runs that personality off Linux,
+// and its syscall layer now serves the xattr calls. Without it the copier
+// compiled this pass out there and dropped every attribute without a word.
 
 package fsx
 
