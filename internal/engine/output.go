@@ -1,3 +1,5 @@
+// printLine writes one full line.
+
 package engine
 
 import (

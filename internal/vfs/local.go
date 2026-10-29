@@ -1,3 +1,5 @@
+// Local passes every call straight through to the os package.
+
 package vfs
 
 import (

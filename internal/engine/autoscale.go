@@ -1,3 +1,5 @@
+// Vars, not consts, so tests can shorten them.
+
 package engine
 
 import (

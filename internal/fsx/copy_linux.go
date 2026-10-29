@@ -1,5 +1,7 @@
 //go:build linux
 
+// A reflink shares extents instantly; credit the whole logical size so live progress reflects that the file has been copied.
+
 package fsx
 
 import (

@@ -1,5 +1,7 @@
 //go:build !linux
 
+// lookup is unsupported off Linux; the controller falls back to throughput/latency signals only.
+
 package device
 
 // lookup is unsupported off Linux; the controller falls back to throughput/latency signals only.

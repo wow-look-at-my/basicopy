@@ -1,5 +1,7 @@
 //go:build linux
 
+// The path may not exist yet (a destination); classify its parent.
+
 package device
 
 import (

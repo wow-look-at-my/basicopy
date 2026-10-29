@@ -1,4 +1,4 @@
-//go:build !darwin && !linux && !netbsd
+//go:build !darwin && !linux && !netbsd && !cosmo
 
 package fsx
 
