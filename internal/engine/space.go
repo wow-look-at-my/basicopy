@@ -1,3 +1,5 @@
+// availBytes reports free space; a package var lets tests simulate a full destination.
+
 package engine
 
 import (

@@ -1,3 +1,5 @@
+// Transport is a single live channel to a host's SFTP subsystem: the pipes the client talks over, plus a shutdown func.
+
 package vfs
 
 import (

@@ -1,3 +1,5 @@
+// queueDirMeta fires a single time this directory can no longer gain children from copies or deferred hardlinks.
+
 package engine
 
 import (

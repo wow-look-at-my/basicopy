@@ -1,3 +1,5 @@
+// Prefix is the "user@host:" text for output, kept in the user's own spelling.
+
 package vfs
 
 import (

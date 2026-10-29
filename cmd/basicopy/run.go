@@ -1,3 +1,5 @@
+// humanBytes formats a byte count with a binary unit suffix.
+
 package main
 
 import (

@@ -111,7 +111,7 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 		}
 	}
 
-	if err := dstFS.Rename(tmpName, dst); err != nil {
+	if err := replace(dstFS, tmpName, dst); err != nil {
 		return n, fmt.Errorf("rename %s -> %s: %w", dstFS.Display(tmpName), dstFS.Display(dst), err)
 	}
 	committed = true
@@ -120,6 +120,27 @@ func CopyFile(srcFS vfs.FS, src string, dstFS vfs.FS, dst string, info os.FileIn
 		return n, &MetaError{Path: dstFS.Display(dst), Err: errors.Join(metaErrs...)}
 	}
 	return n, nil
+}
+
+// replace renames tmp over dst. NT refuses to replace a read-only file. A refused rename over a target with no owner write bit
+// clears the read-only attribute and tries again. If the second rename also fails, dst gets its mode back.
+func replace(fsys vfs.FS, tmp, dst string) error {
+	err := fsys.Rename(tmp, dst)
+	if err == nil || !os.IsPermission(err) {
+		return err
+	}
+	fi, serr := fsys.Lstat(dst)
+	if serr != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o200 != 0 {
+		return err
+	}
+	if cerr := fsys.Chmod(dst, fi.Mode().Perm()|0o200); cerr != nil {
+		return err
+	}
+	if rerr := fsys.Rename(tmp, dst); rerr != nil {
+		_ = fsys.Chmod(dst, fi.Mode().Perm())
+		return rerr
+	}
+	return nil
 }
 
 // MetaError means the file's data was copied and published at Path, but some

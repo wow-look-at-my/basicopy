@@ -1,3 +1,5 @@
+// metaUnsupported reports whether err is a benign missing-metadata-support error.
+
 package fsx
 
 import (

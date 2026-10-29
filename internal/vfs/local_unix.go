@@ -1,5 +1,7 @@
 //go:build unix
 
+// Bavail, not the total free count: bytes an unprivileged caller can write.
+
 package vfs
 
 import (

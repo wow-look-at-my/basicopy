@@ -1,5 +1,7 @@
 //go:build !unix
 
+// retryable reports nothing as retryable off Unix; copies still succeed without retries.
+
 package engine
 
 // retryable reports nothing as retryable off Unix; copies still succeed without retries.

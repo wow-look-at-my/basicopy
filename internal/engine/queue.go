@@ -1,3 +1,5 @@
+// queue is an unbounded FIFO.
+
 package engine
 
 import "sync"

@@ -1,3 +1,5 @@
+// version is overridden at build time via -ldflags "-X main.version=...".
+
 package main
 
 import (

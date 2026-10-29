@@ -1,5 +1,7 @@
 //go:build !linux
 
+// copyData falls back to the portable buffered copy; no OS-native fast path yet.
+
 package fsx
 
 import "os"
