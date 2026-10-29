@@ -1,3 +1,5 @@
+# The suites need the host's node and the xattr tools, which only bwrap shares.
+
 name: CI
 
 on:
