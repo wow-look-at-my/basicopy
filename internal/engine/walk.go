@@ -187,10 +187,7 @@ func (r *runner) visitDir(ctx context.Context, root *srcRoot, srcDir, dstDir str
 	state := r.newDirState(root.fs, srcDir, dstDir, fi)
 	defer r.closeDir(state)
 	r.dirs.Add(1)
-	// Listings for upcoming sibling directories run ahead on the prefetch pool,
-	// so a high-latency filesystem does not charge the walk one round trip per
-	// directory. The window is bounded by the pool size and refills as the walk
-	// consumes entries.
+	// Listings for upcoming sibling directories run ahead on the prefetch pool.
 	ahead := listingPrefetchWorkers()
 	for i := 0; i < len(entries) && i < ahead; i++ {
 		r.prefetchDir(ctx, root, srcDir, entries[i])
@@ -446,19 +443,10 @@ func withinRoot(fsys vfs.FS, rootAbs, targetAbs string) bool {
 }
 
 // A directory listing on a high-latency filesystem can cost a round trip per
-// directory. The prefetcher keeps that I/O off the serial walk: workers list
-// upcoming child directories ahead of the visitor, which consumes a stored
-// result or lists synchronously when none was scheduled.
-//
-// Only ReadDir runs off the walk goroutine. Entries are published immutable;
-// every ordering-sensitive decision -- itemization, DFS dispatch, hardlink
-// primary choice, symlink tracking, --move recording -- stays on the walk
-// goroutine.
+// directory.
 
-// listingWorkerCount is the automatic ceiling on concurrent directory listings,
-// counting the prefetch pool and the walk's own inline listing. It is a small
-// multiple of GOMAXPROCS with a floor and a hard cap, so the bound never grows
-// with the number of directories.
+// listingWorkerCount is the automatic ceiling on concurrent directory
+// listings, counting the prefetch pool and the walk's own inline listing.
 func listingWorkerCount() int {
 	n := 4 * runtime.GOMAXPROCS(0)
 	if n < 8 {
@@ -497,10 +485,9 @@ func newListingPrefetcher() *listingPrefetcher {
 	return p
 }
 
-// listingPrefetchWorkers is the pool size: one slot of the ceiling is left free
-// for the walk's own synchronous listing, so total concurrency stays within
-// listingWorkerCount. The lookahead window is the same size, which keeps every
-// scheduled sibling in flight rather than queued behind the one being awaited.
+// listingPrefetchWorkers is the pool size: one slot of the ceiling is left
+// free for the walk's own synchronous listing, so total concurrency stays
+// within listingWorkerCount.
 func listingPrefetchWorkers() int {
 	n := listingWorkerCount() - 1
 	if n < 1 {

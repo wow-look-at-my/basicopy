@@ -15,9 +15,7 @@ import (
 )
 
 // slowListingFS delays every directory listing: the shape of a high-latency
-// filesystem with good throughput. It counts listings and the peak number in
-// progress so a test can prove the crawl overlapped round trips instead of
-// paying one per directory.
+// filesystem with good throughput.
 type slowListingFS struct {
 	vfs.FS
 	delay  time.Duration
@@ -51,8 +49,7 @@ func slowListings(t *testing.T, delay time.Duration) *slowListingFS {
 	return wrapped
 }
 
-// failingListFS refuses one directory listing. It stands in for an unreadable
-// directory so the error path is deterministic without relying on permissions.
+// failingListFS refuses one directory listing.
 type failingListFS struct {
 	vfs.FS
 	path string
@@ -66,7 +63,7 @@ func (s failingListFS) ReadDir(name string) ([]os.FileInfo, error) {
 }
 
 // TestPrefetchedListingErrorIsReported keeps the failure accounting of a
-// listing unchanged when the listing ran on the prefetch pool: the directory
+// listing unchanged when the listing ran on the prefetch pool. The directory
 // counts as one failure, the rest of the tree still copies, and the error names
 // the directory.
 func TestPrefetchedListingErrorIsReported(t *testing.T) {
@@ -92,9 +89,10 @@ func TestPrefetchedListingErrorIsReported(t *testing.T) {
 }
 
 // TestCrawlOverlapsDirectoryListings is the regression test for a crawl that
-// pays one listing round trip per directory: a wide tree on a slow-listing
-// filesystem must finish in well under the serial sum of its listing delays,
-// with a bounded number of listings in flight and every file copied.
+// pays one listing round trip per directory. A wide tree on a slow-listing
+// filesystem must finish in well under the serial sum of its listing delays.
+// That tree is with a bounded number of listings in flight and every file
+// copied.
 func TestCrawlOverlapsDirectoryListings(t *testing.T) {
 	const (
 		dirs    = 24
