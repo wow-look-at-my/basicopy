@@ -86,7 +86,7 @@ func findTool(name string) string {
 	return ""
 }
 
-func run(t *testing.T, name string, args ...string) {
+func runTool(t *testing.T, name string, args ...string) {
 	t.Helper()
 	out, err := exec.Command(name, args...).CombinedOutput()
 	require.NoError(t, err, "%s %v: %s", name, args, out)
@@ -114,8 +114,8 @@ func realHost(t *testing.T, knownHost bool) (host string) {
 	dir := t.TempDir()
 	hostKey := filepath.Join(dir, "hostkey")
 	userKey := filepath.Join(dir, "id")
-	run(t, tools["ssh-keygen"], "-q", "-t", "ed25519", "-N", "", "-f", hostKey)
-	run(t, tools["ssh-keygen"], "-q", "-t", "ed25519", "-N", testPassphrase, "-f", userKey)
+	runTool(t, tools["ssh-keygen"], "-q", "-t", "ed25519", "-N", "", "-f", hostKey)
+	runTool(t, tools["ssh-keygen"], "-q", "-t", "ed25519", "-N", testPassphrase, "-f", userKey)
 	pub, err := os.ReadFile(userKey + ".pub")
 	require.NoError(t, err)
 	authorized := filepath.Join(dir, "authorized_keys")
@@ -221,7 +221,7 @@ func widen(t *testing.T, fsys FS, path string, extra int) {
 	}
 }
 
-func remoteFile(t *testing.T) string {
+func tempFileOnHost(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "f.txt")
 	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
@@ -240,7 +240,7 @@ func TestPassphraseKeyWidensThePool(t *testing.T) {
 	reg.Diag = &diag
 	t.Cleanup(func() { _ = reg.Close() })
 
-	path := remoteFile(t)
+	path := tempFileOnHost(t)
 	fsys, _, err := reg.Resolve(host + ":" + path)
 	require.NoError(t, err, "diagnostics: %s", diag.String())
 
@@ -266,7 +266,7 @@ func TestWrongPassphraseGetsAnotherTry(t *testing.T) {
 	reg.Diag = &diag
 	t.Cleanup(func() { _ = reg.Close() })
 
-	path := remoteFile(t)
+	path := tempFileOnHost(t)
 	fsys, _, err := reg.Resolve(host + ":" + path)
 	require.NoError(t, err, "diagnostics: %s", diag.String())
 	assert.Len(t, human.questions(), 2)
@@ -287,7 +287,7 @@ func TestUnknownHostKeyIsAskedOnce(t *testing.T) {
 	reg.Human = human
 	t.Cleanup(func() { _ = reg.Close() })
 
-	path := remoteFile(t)
+	path := tempFileOnHost(t)
 	fsys, _, err := reg.Resolve(host + ":" + path)
 	require.NoError(t, err)
 	asked := human.questions()
