@@ -33,7 +33,7 @@ basicopy runs `ssh -s <host> sftp` and speaks SFTP over the subprocess's stdio, 
 - The agent, hardware keys, `known_hosts`, and password/2FA prompts all behave exactly as they do for `ssh` itself. Prompts appear on the terminal because they come from the real `ssh`.
 - Any host you can `ssh` into, you can `basicopy` to. Any host you cannot, the error you get is OpenSSH's own.
 
-Those will only duplicate configuration the user already maintains for every other SSH tool, and each is a way to get a copy incorrect.
+basicopy has no connection flags of its own. A second set only duplicates configuration the user already maintains for every other SSH tool. Each flag is a way to get a copy incorrect.
 
 ## ssh options that are not in your config: `-o`
 
@@ -48,7 +48,7 @@ basicopy -o ControlPath=/run/user/1000/ctl.sock ./site --target-dir deploy@host:
 basicopy -o IdentityFile=/keys/deploy -o UserKnownHostsFile=/keys/known_hosts ./site --target-dir host:/srv/site
 ```
 
-basicopy does not read the options. It passes each to every ssh process it starts, the first connection. And the ones that widen the pool. ssh keeps the first value it sees for a setting. The order on the command line is the precedence:
+basicopy does not read the options. It passes each to every ssh process it starts. That includes the connections that widen the pool. ssh keeps the first value it sees for a setting. The order on the command line is the precedence:
 
 | Source | Wins over |
 |---|---|
