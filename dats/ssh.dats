@@ -54,3 +54,28 @@ tests:
 			1: "^require=force$"
 			2: "^shown: Enter passphrase for key: $"
 			3: "^answer=hunter2$"
+
+	# script gives the copy a terminal. The typed line comes after the prompt has turned the echo off.
+	- desc: on a terminal the copy shows the prompt of ssh there, reads the answer with no echo, and ssh gets it
+	  cmd: |
+		mkdir -p {outputs.bin} {outputs.src}
+		printf '%s\n' '#!/bin/sh' 'answer=$("$SSH_ASKPASS" "Enter passphrase for key: ")' \
+			'echo "answer=$answer" >> "$FAKE_SSH_OUT"' 'exit 1' > {outputs.bin}/ssh
+		chmod +x {outputs.bin}/ssh
+		echo hello > {outputs.src}/a.txt
+		export FAKE_SSH_OUT={outputs.bin}/out
+		export PATH="{outputs.bin}:$PATH"
+		unset SSH_ASKPASS SSH_ASKPASS_REQUIRE
+		if script --version > /dev/null 2>&1; then
+			(sleep 2; echo hunter2; sleep 2) | script -qc "$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy {outputs.src} -q --target-dir pc:/srv" /dev/null > {outputs.bin}/screen 2>&1
+		else
+			(sleep 2; echo hunter2; sleep 2) | script -q /dev/null "$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {outputs.src} -q --target-dir pc:/srv > {outputs.bin}/screen 2>&1
+		fi
+		cat {outputs.bin}/out
+		echo "prompts=$(grep -c 'Enter passphrase for key: ' {outputs.bin}/screen)"
+		echo "echoed=$(grep -c hunter2 {outputs.bin}/screen)"
+	  outputs:
+		stdout:
+			0: "^answer=hunter2$"
+			1: "^prompts=1$"
+			2: "^echoed=0$"

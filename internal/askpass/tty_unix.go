@@ -18,13 +18,16 @@ func openTTY() (int, error) {
 	return syscall.Open(ttyPath, syscall.O_RDWR|syscall.O_CLOEXEC, 0)
 }
 
+// ttyAvailable reports whether a prompt can run on the terminal: it opens,
+// and its settings can be read.
 func ttyAvailable() bool {
 	fd, err := openTTY()
 	if err != nil {
 		return false
 	}
-	_ = syscall.Close(fd)
-	return true
+	defer syscall.Close(fd)
+	_, err = term.GetState(fd)
+	return err == nil
 }
 
 // askTTY writes prompt to the terminal and reads one line, with no echo for a secret.
