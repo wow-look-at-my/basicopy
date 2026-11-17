@@ -31,7 +31,7 @@ var StartTransport = startSSH
 // dial fails instead), and ConnectTimeout bounds it against an unreachable
 // host. The earliest connection is the user's own interactive ssh session and
 // gets neither.
-func sshArgs(loc Location, extra bool) []string {
+func sshArgs(loc Location, sshOpts []string, extra bool) []string {
 	argv := []string{"ssh"}
 	if extra {
 		argv = append(argv, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
@@ -42,6 +42,10 @@ func sshArgs(loc Location, extra bool) []string {
 	if loc.User != "" {
 		argv = append(argv, "-l", loc.User)
 	}
+	// ssh keeps the first value it sees for an option, so sshOpts go last.
+	for _, o := range sshOpts {
+		argv = append(argv, "-o", o)
+	}
 	return append(argv, "-s", loc.Host, "sftp")
 }
 
@@ -50,8 +54,8 @@ func sshArgs(loc Location, extra bool) []string {
 // on -- ~/.ssh/config host aliases and identities, the agent, ProxyJump,
 // known_hosts, password and 2FA prompts. Keeps working, and basicopy grows no
 // connection settings of its own.
-func startSSH(loc Location, extra bool, stderr io.Writer) (*Transport, error) {
-	argv := sshArgs(loc, extra)
+func startSSH(loc Location, sshOpts []string, extra bool, stderr io.Writer) (*Transport, error) {
+	argv := sshArgs(loc, sshOpts, extra)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stderr = stderr // auth prompts and ssh diagnostics reach the user
 	stdin, err := cmd.StdinPipe()
@@ -119,8 +123,8 @@ var clientOptions = []sftp.ClientOption{
 }
 
 // dialConn opens a single ssh connection and starts an SFTP session on it.
-func dialConn(loc Location, extra bool, stderr io.Writer) (*conn, error) {
-	t, err := StartTransport(loc, extra, stderr)
+func dialConn(loc Location, sshOpts []string, extra bool, stderr io.Writer) (*conn, error) {
+	t, err := StartTransport(loc, sshOpts, extra, stderr)
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", loc.Host, err)
 	}
@@ -135,12 +139,12 @@ func dialConn(loc Location, extra bool, stderr io.Writer) (*conn, error) {
 // Dial connects to a remote location, returning an FS whose connection pool can
 // later widen itself on demand. The first connection can prompt, so it owns the
 // real stderr. Connections that widen the pool never prompt and write their
-// diagnostics to diag (nil means os.Stderr).
-func Dial(loc Location, diag io.Writer) (FS, error) {
+// diagnostics to diag (nil means os.Stderr). Every connection gets sshOpts.
+func Dial(loc Location, sshOpts []string, diag io.Writer) (FS, error) {
 	if !loc.Remote {
 		return Local, nil
 	}
-	first, err := dialConn(loc, false, os.Stderr)
+	first, err := dialConn(loc, sshOpts, false, os.Stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +152,7 @@ func Dial(loc Location, diag io.Writer) (FS, error) {
 		diag = os.Stderr
 	}
 	return newRemoteFS(first, hostLabel(loc), func() (*conn, error) {
-		return dialConn(loc, true, diag)
+		return dialConn(loc, sshOpts, true, diag)
 	}), nil
 }
 
@@ -163,6 +167,9 @@ func hostLabel(loc Location) string {
 type Registry struct {
 	// Diag receives ssh diagnostics from connections that widen a pool; nil means os.Stderr.
 	Diag io.Writer
+
+	// SSHOptions are ssh_config options that every ssh process gets as -o arguments.
+	SSHOptions []string
 
 	mu    sync.Mutex
 	conns map[string]FS
@@ -201,7 +208,7 @@ func (r *Registry) For(loc Location) (FS, error) {
 	if fs, ok := r.conns[key]; ok {
 		return fs, nil
 	}
-	fs, err := Dial(loc, r.Diag)
+	fs, err := Dial(loc, r.SSHOptions, r.Diag)
 	if err != nil {
 		return nil, err
 	}

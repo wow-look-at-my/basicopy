@@ -9,8 +9,9 @@ basicopy exists because `robocopy /MT:n` makes you *guess* a thread count and `r
 - **Not fully automatic is not an optimization.** A performance option the user has to find, understand, and set correctly is a waste of everyone's time: almost nobody sets it. The people who do mostly set it incorrect, and it exists only because the automatic path was not written. Write the automatic path.
 - **"Add a flag for it" is never the answer** to "this is faster in some situations". Find the signal that distinguishes those situations, feed it to the controller, and let the loop decide (throughput plateau is usually it).
 - **The existing flags are not precedent.** `--max-threads` and `--buffer` are *ceilings and escape hatches* for shared machines, not tuning dials, and the list does not grow. Behavior flags (`--mirror`, `--checksum`, `--dry-run`) say *what to do*, not *how fast to do it*.
-- **No environment variables, no config file, no `-o` passthrough** for performance either — same rule, different spelling.
+- **No environment variables and no config file** for performance either — same rule, different spelling.
 - Applies to remote copies exactly as it does to local ones. The SSH connection pool widens itself on the plateau signal (`docs/ssh.md`). Everything about *how* to reach a host comes from the user's own `~/.ssh/config`, which they already maintain for every other tool.
+- **`-o` is ssh's flag, not a basicopy dial.** It hands an `ssh_config` option to every ssh process untouched, for a setting that is not in the config (a control socket, a one-run key). basicopy reads none of it. `vfs.sshArgs` sets the order. The order is the precedence.
 
 ## Build & test
 
