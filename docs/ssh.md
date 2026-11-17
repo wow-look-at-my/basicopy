@@ -30,6 +30,7 @@ Sources may name several different hosts in one run. Each gets its own connectio
 
 basicopy runs `ssh -s <host> sftp` and speaks SFTP over the subprocess's stdio, the same approach rsync takes. That single decision is why there are no connection settings to learn:
 
+- `~/.ssh/config` applies in full.
 - The agent, hardware keys, `known_hosts`, and password/2FA prompts all behave exactly as they do for `ssh` itself. Prompts appear on the terminal because they come from the real `ssh`.
 - Any host you can `ssh` into, you can `basicopy` to. Any host you cannot, the error you get is OpenSSH's own.
 
