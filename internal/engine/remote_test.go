@@ -348,6 +348,32 @@ func TestRemoteSymlinksAndExcludes(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "a directory-only pattern must apply to a remote source")
 }
 
+// SFTP setstat follows a link. A chown of a recreated link would land on the
+// target, or fail when the target is not there yet.
+func TestSymlinkToRemoteDestinationLeavesTheTargetAlone(t *testing.T) {
+	fakeRemote(t)
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	writeFile(t, filepath.Join(src, "keep.txt"), []byte("keep"), 0o644)
+	require.NoError(t, os.Symlink("no-such-target", filepath.Join(src, "dangling")))
+
+	o := &options.Options{
+		Sources:          []string{src},
+		TargetDir:        "pc:" + dst,
+		NoFollowSymlinks: true,
+		Progress:         "never",
+	}
+	sum, _, errOut := captureRun(t, o)
+
+	assert.EqualValues(t, 1, sum.Symlinks)
+	assert.Zero(t, sum.Failed)
+	assert.NotContains(t, errOut, "metadata on", "a link's owner must not be set through the link")
+	target, err := os.Readlink(filepath.Join(dst, "src", "dangling"))
+	require.NoError(t, err)
+	assert.Equal(t, "no-such-target", target)
+}
+
 // TestRemoteHardlinkWarning: SFTP carries no inode identity, so hardlinked
 // source files cannot be recognised. That changes what lands in the
 // destination, so it must be said rather than silently absorbed.

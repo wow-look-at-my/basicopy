@@ -104,6 +104,7 @@ These are protocol limits, not omissions. Everything else — content, mode, mti
 |---|---|
 | No inode numbers or link counts | Hardlinks in a **remote source** cannot be detected, so linked files are copied individually. Said once under `--verbose`. A local source copied to a remote destination keeps its hardlinks. |
 | No `st_dev` | `--one-file-system` cannot see a mount point inside a remote source. |
+| No attribute change that stops at a link | A symlink recreated on a **remote destination** gets the login's owner, not the source link's. Setting it would change the file the link points at. |
 | No xattr operations | Extended attributes, and the Linux ACLs that ride on them, are not copied when either end is remote. Mode, owner, and times still are. |
 | Whole-second mtimes (SFTP v3) | Preserved times are truncated to the second. The unchanged-file comparison already tolerates one second, so re-runs still skip correctly. |
 | No server-side copy or reflink | The kernel fast paths (`FICLONE`, `copy_file_range`, sparse hole-skipping) are local-to-local only; a remote copy streams bytes. Sparse files are written dense on the far side. |
