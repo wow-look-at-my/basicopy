@@ -97,13 +97,14 @@ func Start(human Human) (*Broker, error) {
 	return b, nil
 }
 
-// selfPath finds this executable. The command line comes first: under a loader
-// the path that the kernel reports can be the loader.
+// selfPath finds this executable, for ssh to run as its askpass program.
 func selfPath() (string, error) {
-	if p, err := lookSelf(os.Args[0]); err == nil {
-		return p, nil
+	if p, err := os.Executable(); err == nil {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p, nil
+		}
 	}
-	return os.Executable()
+	return lookSelf(os.Args[0])
 }
 
 // Close stops the Broker. A helper that waits gets no answer.

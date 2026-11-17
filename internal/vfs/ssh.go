@@ -315,7 +315,7 @@ func (r *Registry) brokerLocked() *askpass.Broker {
 		return r.prompts
 	}
 	if hostIsWindows() {
-		// Not proven there: the native ssh.exe must run this binary by the path that Env gives it.
+		// There this binary names its own path as "/c/...", and the native ssh.exe cannot start that.
 		r.Human = nil
 		return nil
 	}
