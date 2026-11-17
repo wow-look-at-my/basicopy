@@ -102,9 +102,8 @@ func realHost(t *testing.T, knownHost bool) (host string) {
 	for _, name := range []string{"ssh", "sshd", "ssh-keygen"} {
 		tools[name] = findTool(name)
 		if tools[name] == "" {
-			if os.Getenv("CI") != "" {
-				t.Fatalf("%s is not installed; CI must run this test", name)
-			}
+			require.Equal(t, "", os.Getenv("CI"))
+
 			t.Skipf("%s is not installed", name)
 		}
 	}
