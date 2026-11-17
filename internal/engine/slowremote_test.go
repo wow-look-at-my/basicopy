@@ -3,7 +3,6 @@ package engine
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"path/filepath"
 	"sync/atomic"
 	"testing"

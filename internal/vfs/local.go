@@ -44,6 +44,8 @@ func (localFS) Chmod(name string, mode os.FileMode) error    { return os.Chmod(n
 // Chown does not follow a symlink: a recreated link keeps its own owner, not the target's.
 func (localFS) Chown(name string, uid, gid int) error { return os.Lchown(name, uid, gid) }
 
+func (localFS) Lchown(name string, uid, gid int) error { return os.Lchown(name, uid, gid) }
+
 func (localFS) Chtimes(name string, atime, mtime time.Time) error {
 	return os.Chtimes(name, atime, mtime)
 }

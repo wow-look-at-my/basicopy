@@ -37,6 +37,8 @@ type Connect struct {
 	Stderr io.Writer
 	// Prompts answers the questions of ssh. With nil, ssh asks on the terminal itself.
 	Prompts *askpass.Broker
+	// SSHOpts are ssh_config options that this connection passes as -o arguments.
+	SSHOpts []string
 }
 
 // StartTransport is a var so tests can swap in an in-process SFTP server.
@@ -44,8 +46,9 @@ var StartTransport = startSSH
 
 // sshArgs builds the ssh command line. extra marks a pool-widening connection:
 // ConnectTimeout bounds it against an unreachable host. batch adds
-// BatchMode=yes, so ssh fails the dial where it would ask a question.
-func sshArgs(loc Location, extra, batch bool) []string {
+// BatchMode=yes, so ssh fails the dial where it would ask a question. sshOpts
+// are the user's -o options, and their place in the line is their precedence.
+func sshArgs(loc Location, sshOpts []string, extra, batch bool) []string {
 	argv := []string{"ssh"}
 	if batch {
 		argv = append(argv, "-o", "BatchMode=yes")
@@ -58,6 +61,10 @@ func sshArgs(loc Location, extra, batch bool) []string {
 	}
 	if loc.User != "" {
 		argv = append(argv, "-l", loc.User)
+	}
+	// ssh keeps the first value it sees for an option, so sshOpts go last.
+	for _, o := range sshOpts {
+		argv = append(argv, "-o", o)
 	}
 	return append(argv, "-s", loc.Host, "sftp")
 }
@@ -75,7 +82,7 @@ func startSSH(c Connect) (*Transport, error) {
 		session = c.Prompts.Session(hostLabel(c.Loc), !c.Extra)
 		batch = c.Extra && !c.Prompts.Heard()
 	}
-	argv := sshArgs(c.Loc, c.Extra, batch)
+	argv := sshArgs(c.Loc, c.SSHOpts, c.Extra, batch)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stderr = c.Stderr
 	var proc atomic.Pointer[os.Process]
@@ -218,12 +225,13 @@ var authNoteDelay = 5 * time.Second
 // Dial connects to a remote location, returning an FS whose connection pool can
 // later widen itself on demand. The first connection owns the real stderr.
 // Connections that widen the pool write their diagnostics to diag (nil means
-// os.Stderr). prompts (optional) answers the questions of every connection.
-func Dial(loc Location, diag io.Writer, prompts *askpass.Broker) (FS, error) {
+// os.Stderr). prompts (optional) answers the questions of every connection, and
+// every connection gets sshOpts.
+func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broker) (FS, error) {
 	if !loc.Remote {
 		return Local, nil
 	}
-	first, err := dialConn(Connect{Loc: loc, Stderr: os.Stderr, Prompts: prompts}, nil)
+	first, err := dialConn(Connect{Loc: loc, Stderr: os.Stderr, Prompts: prompts, SSHOpts: sshOpts}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +247,7 @@ func Dial(loc Location, diag io.Writer, prompts *askpass.Broker) (FS, error) {
 			}
 		})
 		defer note.Stop()
-		return dialConn(Connect{Loc: loc, Extra: true, Stderr: diag, Prompts: prompts}, stop)
+		return dialConn(Connect{Loc: loc, Extra: true, Stderr: diag, Prompts: prompts, SSHOpts: sshOpts}, stop)
 	}), nil
 }
 
@@ -256,6 +264,9 @@ type Registry struct {
 	Diag io.Writer
 	// Human answers the questions of ssh. With nil, each ssh asks on the terminal itself.
 	Human askpass.Human
+
+	// SSHOptions are ssh_config options that every ssh process gets as -o arguments.
+	SSHOptions []string
 
 	mu      sync.Mutex
 	conns   map[string]FS
@@ -316,7 +327,7 @@ func (r *Registry) For(loc Location) (FS, error) {
 	if fs, ok := r.conns[key]; ok {
 		return fs, nil
 	}
-	fs, err := Dial(loc, r.Diag, r.brokerLocked())
+	fs, err := Dial(loc, r.SSHOptions, r.Diag, r.brokerLocked())
 	if err != nil {
 		return nil, err
 	}

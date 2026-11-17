@@ -78,22 +78,73 @@ func TestAnyRemote(t *testing.T) {
 func TestSSHArgs(t *testing.T) {
 	loc, err := Parse("ssh://me@pc:2222/srv")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ssh", "-p", "2222", "-l", "me", "-s", "pc", "sftp"}, sshArgs(loc, false, false))
+	assert.Equal(t, []string{"ssh", "-p", "2222", "-l", "me", "-s", "pc", "sftp"}, sshArgs(loc, nil, false, false))
 
 	// A connection opened to widen the pool must never prompt on the terminal by itself.
 	assert.Equal(t,
 		[]string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
-		sshArgs(loc, true, true))
+		sshArgs(loc, nil, true, true))
 
 	// With its prompts answered by the broker, it drops BatchMode so a passphrase can reach the key.
 	assert.Equal(t,
 		[]string{"ssh", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
-		sshArgs(loc, true, false))
+		sshArgs(loc, nil, true, false))
 
 	plain, err := Parse("pc:/srv")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ssh", "-s", "pc", "sftp"}, sshArgs(plain, false, false),
+	assert.Equal(t, []string{"ssh", "-s", "pc", "sftp"}, sshArgs(plain, nil, false, false),
 		"with no user or port, ssh is left to consult the user's own config")
+}
+
+func TestSSHArgsPassesUserOptions(t *testing.T) {
+	plain, err := Parse("pc:/srv")
+	require.NoError(t, err)
+	user := []string{"ControlPath=/run/ctl.sock", "IdentityFile=/keys/deploy"}
+
+	assert.Equal(t,
+		[]string{"ssh", "-o", "ControlPath=/run/ctl.sock", "-o", "IdentityFile=/keys/deploy", "-s", "pc", "sftp"},
+		sshArgs(plain, user, false, false),
+		"each option becomes its own -o argument, in the order given")
+
+	// ssh keeps the first value it sees, so position decides who wins.
+	loc, err := Parse("ssh://me@pc:2222/srv")
+	require.NoError(t, err)
+	assert.Equal(t,
+		[]string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me",
+			"-o", "BatchMode=no", "-o", "Port=22", "-s", "pc", "sftp"},
+		sshArgs(loc, []string{"BatchMode=no", "Port=22"}, true, true),
+		"a pool connection stays unable to prompt, and the port in the path beats -o Port")
+}
+
+// A control socket only helps if the connections that widen the pool use it too.
+func TestDialGivesEveryConnectionTheUserOptions(t *testing.T) {
+	t.Serial()
+	type dial struct {
+		opts  []string
+		extra bool
+	}
+	var seen []dial
+	old := StartTransport
+	StartTransport = func(c Connect) (*Transport, error) {
+		seen = append(seen, dial{c.SSHOpts, c.Extra})
+		return pipeTransport(c)
+	}
+	t.Cleanup(func() { StartTransport = old })
+
+	reg := NewRegistry()
+	reg.SSHOptions = []string{"ControlPath=/run/ctl.sock"}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	fsys, _, err := reg.Resolve("pc:/srv")
+	require.NoError(t, err)
+	widened, err := fsys.(*remoteFS).dial(nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = widened.close() })
+
+	assert.Equal(t, []dial{
+		{[]string{"ControlPath=/run/ctl.sock"}, false},
+		{[]string{"ControlPath=/run/ctl.sock"}, true},
+	}, seen)
 }
 
 func TestSameHost(t *testing.T) {

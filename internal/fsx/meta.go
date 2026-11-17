@@ -72,7 +72,11 @@ func preserveOwner(srcFS vfs.FS, info os.FileInfo, dstFS vfs.FS, dst string) err
 	if !ok {
 		return nil
 	}
-	if err := dstFS.Chown(dst, uid, gid); err != nil {
+	chown := dstFS.Chown
+	if info.Mode()&os.ModeSymlink != 0 {
+		chown = dstFS.Lchown
+	}
+	if err := chown(dst, uid, gid); err != nil {
 		if os.IsPermission(err) || metaUnsupported(err) {
 			return nil
 		}

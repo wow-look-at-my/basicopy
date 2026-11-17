@@ -5,6 +5,7 @@ package vfs
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -186,6 +187,9 @@ func (f *remoteFS) Chmod(name string, mode os.FileMode) error {
 func (f *remoteFS) Chown(name string, uid, gid int) error {
 	return runErr(f, func(c *sftp.Client) error { return c.Chown(name, uid, gid) })
 }
+
+// Lchown is unsupported: SFTP setstat follows a link, so the chown would land on the target.
+func (f *remoteFS) Lchown(string, int, int) error { return errors.ErrUnsupported }
 
 func (f *remoteFS) Chtimes(name string, atime, mtime time.Time) error {
 	return runErr(f, func(c *sftp.Client) error { return c.Chtimes(name, atime, mtime) })
