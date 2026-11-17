@@ -1,6 +1,7 @@
 package vfs
 
 import (
+	"io"
 	"testing"
 
 	"github.com/pkg/sftp"

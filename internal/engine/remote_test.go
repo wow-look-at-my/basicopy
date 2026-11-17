@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
