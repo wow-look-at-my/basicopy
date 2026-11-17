@@ -95,15 +95,14 @@ func runTool(t *testing.T, name string, args ...string) {
 // realHost starts an sshd that accepts one key, protected by testPassphrase,
 // and makes "ssh" on PATH reach it under the returned host name. knownHost
 // false leaves the host key unknown, so ssh asks about it.
-func realHost(t *testing.T, knownHost bool) (host string) {
+func realHost(t *testing.T, knownHost bool) (host, knownHosts string) {
 	t.Helper()
 	t.Serial()
 	tools := map[string]string{}
 	for _, name := range []string{"ssh", "sshd", "ssh-keygen"} {
 		tools[name] = findTool(name)
 		if tools[name] == "" {
-			require.Equal(t, "", os.Getenv("CI"))
-
+			require.Empty(t, os.Getenv("CI"), "%s is not installed; CI must run this test", name)
 			t.Skipf("%s is not installed", name)
 		}
 	}
@@ -165,7 +164,7 @@ Subsystem sftp internal-sftp
 		return true
 	}, 10*time.Second, 20*time.Millisecond, "sshd did not start to listen")
 
-	knownHosts := filepath.Join(dir, "known_hosts")
+	knownHosts = filepath.Join(dir, "known_hosts")
 	if knownHost {
 		hostPub, err := os.ReadFile(hostKey + ".pub")
 		require.NoError(t, err)
@@ -191,7 +190,7 @@ Subsystem sftp internal-sftp
 	wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' -F '%s' \"$@\"\n", tools["ssh"], clientConfig)
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "ssh"), []byte(wrapper), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return host
+	return host, knownHosts
 }
 
 // widen holds transfers open until the pool has tried to grow by extra connections.
@@ -231,7 +230,7 @@ func tempFileOnHost(t *testing.T) string {
 // passphrase: one question to the person. Each later connection is a new ssh
 // process that gets the answer from the broker.
 func TestPassphraseKeyWidensThePool(t *testing.T) {
-	host := realHost(t, true)
+	host, _ := realHost(t, true)
 	human := &scriptedHuman{answers: []string{testPassphrase}}
 	var diag syncBuffer
 	reg := NewRegistry()
@@ -257,7 +256,7 @@ func TestPassphraseKeyWidensThePool(t *testing.T) {
 // TestWrongPassphraseGetsAnotherTry: ssh asks again after a wrong passphrase,
 // and the pool then uses the answer that worked.
 func TestWrongPassphraseGetsAnotherTry(t *testing.T) {
-	host := realHost(t, true)
+	host, _ := realHost(t, true)
 	human := &scriptedHuman{answers: []string{"a typo", testPassphrase}}
 	var diag syncBuffer
 	reg := NewRegistry()
@@ -280,7 +279,7 @@ func TestWrongPassphraseGetsAnotherTry(t *testing.T) {
 // TestUnknownHostKeyIsAskedOnce: the host key question reaches the person
 // through the broker, and "yes" lets the copy connect.
 func TestUnknownHostKeyIsAskedOnce(t *testing.T) {
-	host := realHost(t, false)
+	host, _ := realHost(t, false)
 	human := &scriptedHuman{answers: []string{"yes", testPassphrase}}
 	reg := NewRegistry()
 	reg.Human = human
@@ -302,10 +301,46 @@ func TestUnknownHostKeyIsAskedOnce(t *testing.T) {
 	assert.Len(t, human.questions(), 2)
 }
 
+// TestPoolConnectionWithANewQuestionStops: a connection that widens the pool
+// meets a question that the person never answered. That ssh is stopped, the
+// copy says why one time, and the transfers share the connections that exist.
+func TestPoolConnectionWithANewQuestionStops(t *testing.T) {
+	host, knownHosts := realHost(t, true)
+	human := &scriptedHuman{answers: []string{testPassphrase}}
+	var diag syncBuffer
+	reg := NewRegistry()
+	reg.Human = human
+	reg.Diag = &diag
+	t.Cleanup(func() { _ = reg.Close() })
+
+	path := tempFileOnHost(t)
+	fsys, _, err := reg.Resolve(host + ":" + path)
+	require.NoError(t, err)
+
+	// The host key is forgotten, so the next ssh asks about it.
+	require.NoError(t, os.Remove(knownHosts))
+	widen(t, fsys, path, 2)
+
+	open, frozen := fsys.(Pooled).Pool()
+	assert.Equal(t, 1, open)
+	assert.True(t, frozen)
+	assert.Len(t, human.questions(), 1, "only the first connection may ask the person")
+	assert.Equal(t, 1, strings.Count(diag.String(), "only you can answer that"), "diagnostics: %s", diag.String())
+	assert.Contains(t, diag.String(), "ssh: "+host+": another connection asks \"The authenticity of host")
+}
+
+func TestFirstLine(t *testing.T) {
+	assert.Equal(t, "Password:", firstLine("  Password: \n"))
+	assert.Equal(t, "The authenticity of host 'pc' can't be established.", firstLine("The authenticity of host 'pc' can't be established.\nED25519 key fingerprint is SHA256:abc.\n"))
+	long := firstLine(strings.Repeat("x", 300))
+	assert.Len(t, long, 103)
+	assert.True(t, strings.HasSuffix(long, "..."))
+}
+
 // TestNobodyAnswersFailsTheFirstConnection: when the person gives no answer,
 // the copy stops with an error. It does not wait.
 func TestNobodyAnswersFailsTheFirstConnection(t *testing.T) {
-	host := realHost(t, true)
+	host, _ := realHost(t, true)
 	human := &scriptedHuman{}
 	reg := NewRegistry()
 	reg.Human = human

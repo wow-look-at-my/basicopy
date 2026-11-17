@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wow-look-at-my/go-containers/set"
 )
 
 // envBroker carries "address/token/session" from the Broker to the helper. It is internal plumbing.
@@ -65,7 +67,7 @@ type Broker struct {
 	sessions map[string]*Session
 	next     int
 	heard    bool
-	open     map[net.Conn]struct{} // helper connections that wait for an answer
+	open     set.Set[net.Conn] // helper connections that wait for an answer
 	closed   bool
 }
 
@@ -90,7 +92,6 @@ func Start(human Human) (*Broker, error) {
 		self:     self,
 		answers:  map[string]string{},
 		sessions: map[string]*Session{},
-		open:     map[net.Conn]struct{}{},
 	}
 	go b.serve()
 	return b, nil
@@ -110,7 +111,7 @@ func (b *Broker) Close() error {
 	err := b.ln.Close()
 	b.mu.Lock()
 	b.closed = true
-	for c := range b.open {
+	for c := range b.open.All() {
 		_ = c.Close()
 	}
 	b.mu.Unlock()
@@ -124,13 +125,13 @@ func (b *Broker) hold(c net.Conn) bool {
 	if b.closed {
 		return false
 	}
-	b.open[c] = struct{}{}
+	b.open.Add(c)
 	return true
 }
 
 func (b *Broker) drop(c net.Conn) {
 	b.mu.Lock()
-	delete(b.open, c)
+	b.open.Remove(c)
 	b.mu.Unlock()
 	_ = c.Close()
 }
