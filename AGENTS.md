@@ -28,6 +28,8 @@ CI is `.github/workflows/ci.yml` (the go-toolchain GitHub Action). Tests use the
 ```
 cmd/basicopy/        cobra CLI (one command per file, self-registering via init())
 internal/
+  askpass/   the prompt broker: basicopy is the askpass program of its own ssh
+             children, so one answer serves every connection -- docs/ssh.md
   options/   parsed flags + Validate() + human size parsing (no cobra dependency)
   engine/    orchestration (engine.go) + walking/dispatch/itemized output
              (walk.go): pipelined walk (dirs/symlinks/hardlinks and itemization
@@ -67,6 +69,7 @@ Platform-specific code is build-tagged behind small functions.
 - **Crash safety:** every file is written to a temp file in the destination directory and atomically renamed. An interrupted run never leaves a corrupt file at the last path.
 - **One code path, kinds of filesystem.** Nothing outside `vfs` calls `os.*` or `filepath.*` on a copy path: each side of a copy carries a `vfs.FS` (which also supplies the path helpers, POSIX for remote). Adding a capability means adding it once.
 - **One connection per concurrent transfer.** An sftp-server answers one request at a time, so transfers sharing a connection run in sequence on the far side. `vfs.remoteFS` dials on demand (cap 16, first connection reserved for metadata). Restraint comes from `W`, which is already measured. `docs/ssh.md`.
+- **One answer per prompt, not per connection** (`internal/askpass`). Each ssh child gets `SSH_ASKPASS=<this binary>`, and `main` turns into the helper when `askpass.Requested()`. The broker asks the person once and replays the answer to pool connections, which never ask a new question. Never solve a prompt with a control socket: that puts every transfer on one TCP connection. `docs/ssh.md`.
 - **`--move`** (`engine/move.go`): one rename per root when the target name is free on the same host, else copy and record each finished source entry. The removal pass runs after `--mirror`, which reads the source.
 - **Ctrl-C drains, it does not abort.** Context cancel stops the walk, the workers finish the queue, and `Run` returns `ErrInterrupted`. A second signal exits in `main`. ssh children start under `interrupt.Shield` so they survive the first Ctrl-C.
 - **Shared extents cross once** (`fsx/extents*.go`). When the whole-file reflink fails (another filesystem), FIEMAP finds the source's shared extents. The first copy of each is recorded in a run-wide index the moment its bytes land. Later references clone it with `FICLONERANGE`, and a concurrent worker waits on the claim rather than copy it twice. A clone is trusted only if the source map is unchanged after the copy, else the file is copied again in full.
@@ -79,6 +82,7 @@ Platform-specific code is build-tagged behind small functions.
 - The env runs as root, so permission-denied paths cannot be exercised. Tests use other real failure modes (missing sources, dest collisions, ENOTDIR).
 - `vfs.FS.FileID`/`Dev` (inode identity, device) answer only on a local `unix` build. The shipped APE is one on every host, Windows included, so `dats/metadata.dats` expects hardlinks kept on all three. Go tests of hardlinks and one-file-system live in `*_unix_test.go`.
 - Remote tests need no network, credentials, or `ssh` binary. They swap `vfs.StartTransport` for an in-process `pkg/sftp` server over pipes (see `internal/vfs/testserver_test.go`, `internal/engine/remote_test.go`), so the real protocol code runs.
+- `vfs/realssh_unix_test.go` is the exception: it runs the real `ssh` against a real `sshd` on loopback, because prompt handling is OpenSSH's behavior. It skips where the programs are missing and fails there under `CI`. The test binary is the askpass helper (`vfs/main_test.go`).
 - `dats/data.dats` and `dats/metadata.dats` test the built binary itself. go-toolchain runs them on Linux. CI's `every-host` job runs them on macOS and Windows against the same APE, received with `buildhost-handoff`. `dats/fstree.mjs` builds the fixture and compares trees, in node so one script serves all hosts. A per-host answer starts with the host name.
 - `xplat/` is the cross-host pair. `produce.dats` sends each host's copy and manifest, and `receive.dats` copies every host's tree on each host. Both need `--no-sandbox`, so go-toolchain does not run them.
 - That server answers requests concurrently, unlike a real sftp-server, so it cannot show serialization. `engine/slowremote_test.go` proxies it into one request at a time with delayed reads. The only faithful model of a cloud-backed remote, and the regression test for parallel transfers.

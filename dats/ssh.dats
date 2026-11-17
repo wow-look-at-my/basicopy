@@ -1,4 +1,4 @@
-# The ssh command line of the built binary. A stand-in ssh on PATH records its arguments and fails,
+# How the built binary starts ssh. A stand-in ssh on PATH records what it gets and fails,
 # so no host, network or credential is needed.
 
 tests:
@@ -34,3 +34,23 @@ tests:
 		stdout:
 			0: "^exit=1$"
 			1: "^-s pc sftp $"
+
+	- desc: a prompt of ssh comes to the copy, the person's own askpass answers it, and ssh gets the answer
+	  cmd: |
+		mkdir -p {outputs.bin} {outputs.src}
+		printf '%s\n' '#!/bin/sh' 'echo "shown: $1" >> "$FAKE_SSH_OUT"' 'echo hunter2' > {outputs.bin}/askpass
+		printf '%s\n' '#!/bin/sh' 'echo "require=$SSH_ASKPASS_REQUIRE" >> "$FAKE_SSH_OUT"' \
+			'answer=$("$SSH_ASKPASS" "Enter passphrase for key: ")' 'echo "answer=$answer" >> "$FAKE_SSH_OUT"' 'exit 1' > {outputs.bin}/ssh
+		chmod +x {outputs.bin}/ssh {outputs.bin}/askpass
+		echo hello > {outputs.src}/a.txt
+		export FAKE_SSH_OUT={outputs.bin}/out
+		SSH_ASKPASS={outputs.bin}/askpass SSH_ASKPASS_REQUIRE=force PATH="{outputs.bin}:$PATH" \
+			"$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {outputs.src} -q --target-dir pc:/srv
+		echo "exit=$?"
+		cat {outputs.bin}/out
+	  outputs:
+		stdout:
+			0: "^exit=1$"
+			1: "^require=force$"
+			2: "^shown: Enter passphrase for key: $"
+			3: "^answer=hunter2$"

@@ -31,7 +31,7 @@ Sources may name several different hosts in one run. Each gets its own connectio
 basicopy runs `ssh -s <host> sftp` and speaks SFTP over the subprocess's stdio, the same approach rsync takes. That single decision is why there are no connection settings to learn:
 
 - `~/.ssh/config` applies in full.
-- The agent, hardware keys, `known_hosts`, and password/2FA prompts all behave exactly as they do for `ssh` itself. Prompts appear on the terminal because they come from the real `ssh`.
+- The agent, hardware keys, `known_hosts`, and password/2FA prompts all behave exactly as they do for `ssh` itself. Every prompt is the real `ssh`'s own. basicopy shows it on the terminal and remembers the answer for the connections. Those connections follow (see [Prompts](#prompts-one-answer-for-every-connection)).
 - Any host you can `ssh` into, you can `basicopy` to. Any host you cannot, the error you get is OpenSSH's own.
 
 basicopy has no connection flags of its own. A second set only duplicates configuration the user already maintains for every other SSH tool. Each flag is a way to get a copy incorrect.
@@ -53,11 +53,13 @@ basicopy does not read the options. It passes each to every ssh process it start
 
 | Source | Wins over |
 |---|---|
-| `BatchMode=yes`, `ConnectTimeout=10` on a pool-widening connection | everything below |
+| `ConnectTimeout=10` on a pool-widening connection, and `BatchMode=yes` on it until basicopy has answered a prompt (see [Prompts](#prompts-one-answer-for-every-connection)) | everything below |
 | the user and port written in the path (`user@host`, `ssh://host:port`) | `-o User`, `-o Port` |
 | `-o` | `~/.ssh/config` |
 
-A control socket carries every connection as a session on the login, whether it comes from `-o ControlPath` or from `ControlMaster` in your config. Nothing prompts twice. `sshd` limits the sessions on one login (`MaxSessions`, 10 unless the server says otherwise). Past that limit ssh reports `Session open refused by peer` and tries a login of its own. If that login needs a prompt the pool stops growing and the copy continues on the connections it has.
+A control socket carries every connection as a session on the login, whether it comes from `-o ControlPath` or from `ControlMaster` in your config. Nothing prompts twice. `sshd` limits the sessions on one login (`MaxSessions`, 10 unless the server says otherwise). Past that limit ssh reports `Session open refused by peer` and tries a login of its own. That login gets the answers you already gave in this run. If it needs one you did not give, the pool stops growing and the copy continues on the connections it has.
+
+A control socket is not needed to avoid repeated prompts. It also puts every transfer on one TCP connection, which costs speed on a long or lossy link.
 
 ## Connections (automatic, like everything else)
 
@@ -81,8 +83,29 @@ How the pool grows:
 
 Details make dialing safe rather than clever:
 
-- **Extra connections run with `BatchMode=yes` and `ConnectTimeout=10`.** A host that needs an interactive credential can never be asked for it a second time mid-copy. A host that became unreachable fails the dial promptly instead of leaving transfers waiting on a handshake that will never complete. Either way the pool freezes at its current size and the copy continues. Neither option is imposed on the first connection, which is the user's own ssh session.
+- **Extra connections never ask you a new question, and run with `ConnectTimeout=10`.** A connection that widens the pool gets only the answers you gave to the first one. A host that became unreachable fails the dial promptly instead of leaving transfers waiting on a handshake that will never complete. When a dial fails the pool freezes at its current size and the copy continues. Neither limit is imposed on the first connection, which is the user's own ssh session.
 - **Dials happen one at a time**, in the background, so a run never opens a burst of simultaneous handshakes (which `sshd`'s `MaxStartups` will start dropping).
+- **A dial that still waits when the copy ends is stopped.** No ssh process stays behind to wait for a touch or an approval.
+
+## Prompts: one answer for every connection
+
+Every connection in the pool is a separate ssh login on its own TCP connection. A key with a passphrase, a password, or a security-key PIN is asked for again on each. basicopy asks once.
+
+```
+$ basicopy ~/photos --target-dir nas:/backup
+Enter passphrase for key '/home/me/.ssh/id_ed25519':
+```
+
+basicopy makes itself the askpass program of each ssh it starts (`SSH_ASKPASS`, with `SSH_ASKPASS_REQUIRE=force`). Every prompt comes back to the running copy. The copy shows it on your terminal, reads a secret without echo, and keeps the answer in memory until the run ends. A later connection that asks the same question gets the same answer. Nothing goes to disk. No agent and no control socket is involved, so each connection stays its own login.
+
+- **A pool connection gets only answers you already gave.** Suppose it meets a question you never answered. Then such as a one-time code or a changed host key, basicopy stops that ssh before it replies to the host. It says so once and the copy continues on the connections it has.
+- **A incorrect answer gets another try on the first connection.** ssh repeats a prompt when the answer failed, and basicopy asks you again. A pool connection does not try a failed answer twice.
+- **A security key that needs a touch needs a touch for each connection.** That is the key's own rule: each login is a new signature. basicopy shows ssh's request (`Confirm user presence for key ...`) for each new connection. The pool grows as you touch. A touch you do not give ends as a failed login when the key gives up, and the pool keeps its size.
+- **A key in an agent waits inside the agent.** basicopy cannot see that request. When a new connection waited a few seconds to log in, basicopy says so once.
+- **Your own askpass program still works.** If your environment sends ssh prompts to a program (`SSH_ASKPASS`), basicopy asks through that program under the rules ssh applies, and still asks once.
+- **With no terminal and no askpass program**, ssh does its own prompting as before and a pool connection runs with `BatchMode=yes`.
+- **An ssh older than OpenSSH `8.4` ignores `SSH_ASKPASS_REQUIRE`** and prompts by itself. basicopy notices that no prompt reached it and keeps `BatchMode=yes` on pool connections. A key with a passphrase stays on one connection there.
+- **Ctrl-C at a prompt** ends the prompt. The login fails with ssh's own error.
 
 ### Why not "just pipeline harder" on one connection
 
@@ -115,3 +138,5 @@ These are protocol limits, not omissions. Everything else — content, mode, mti
 ## How it is tested
 
 `internal/vfs` and the engine's remote tests run against an **in-process SFTP server** (`pkg/sftp`'s server implementation) wired to the client through pipes, via the `vfs.StartTransport` seam. Real packets, real handles, real attribute round trips, real extension negotiation — only the ssh subprocess is absent. The tests need no network, no credentials, and no `ssh` binary while still exercising the code that runs against a real host. The ssh command line itself is covered separately as a pure function (`sshArgs`). `dats/ssh.dats` checks it on the built binary, with a stand-in `ssh` on `PATH` that records its arguments.
+
+Prompts are the exception, because the behavior under test is OpenSSH's. `internal/vfs/realssh_unix_test.go` starts a real `sshd` on the loopback interface and logs in with the real `ssh` and a key that has a passphrase. It checks that the person is asked once and that each pool connection is a new ssh login. CI installs both programs. On a machine without them the tests skip. `internal/askpass` tests the terminal prompt on a pseudo terminal.

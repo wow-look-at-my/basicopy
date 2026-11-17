@@ -23,10 +23,10 @@ jobs:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      # The suites need the host's node and the xattr tools, which only bwrap shares. The docker fallback image has neither.
+      # The suites need the host's node and the xattr tools, which only bwrap shares. The docker fallback image has neither. The Go tests of ssh prompts run the real ssh against a real sshd.
       - uses: wow-look-at-my/actions@cached-apt#latest
         with:
-          packages: attr bubblewrap
+          packages: attr bubblewrap openssh-client openssh-server
       - name: Let bwrap open a user namespace
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: wow-look-at-my/go-toolchain@lkgb
