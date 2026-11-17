@@ -8,7 +8,7 @@ basicopy myotherpc:/home/mhayine/whatever --target-dir ./local
 basicopy notes.txt --target-file me@myotherpc:/srv/notes.txt
 ```
 
-Every feature works the same on both sides: the auto-scaling worker pool, the skip-unchanged incremental pass, `--checksum`, `--mirror`, `--dry-run` itemization, and `--exclude`. This also covers the pre-write space guard, the stall watchdog, and crash-safe temp-file-plus-rename publication.
+Every feature works the same on both sides. This also covers the pre-write space guard, the stall watchdog, and crash-safe temp-file-plus-rename publication.
 
 ## Path syntax
 
@@ -30,11 +30,34 @@ Sources may name several different hosts in one run. Each gets its own connectio
 
 basicopy runs `ssh -s <host> sftp` and speaks SFTP over the subprocess's stdio, the same approach rsync takes. That single decision is why there are no connection settings to learn:
 
-- `~/.ssh/config` applies in full — `Host` aliases, `HostName`, `Port`, `User`, `IdentityFile`, `ProxyJump`, `ControlMaster`, `Compression`, everything.
+- `~/.ssh/config` applies in full.
 - The agent, hardware keys, `known_hosts`, and password/2FA prompts all behave exactly as they do for `ssh` itself. Prompts appear on the terminal because they come from the real `ssh`.
 - Any host you can `ssh` into, you can `basicopy` to. Any host you cannot, the error you get is OpenSSH's own.
 
-There is deliberately **no** `--ssh`, `-e`, `-o`, `-i`, `-p`, or environment override. Those will only duplicate configuration the user already maintains for every other SSH tool, and each one is a way to get a copy incorrect.
+basicopy has no connection flags of its own. A second set only duplicates configuration the user already maintains for every other SSH tool. Each flag is a way to get a copy incorrect.
+
+## ssh options that are not in your config: `-o`
+
+Some settings exist only for one run. A deploy script opens a control socket at a path it chose. A CI job holds a key in a temporary file. `-o` (long form `--ssh-option`) hands such a setting to ssh, in `ssh_config` format, exactly as `ssh -o` and `scp -o` take it. It repeats.
+
+```sh
+# Log in once, then copy over that login without a second prompt.
+ssh -M -S /run/user/1000/ctl.sock -fN deploy@host
+basicopy -o ControlPath=/run/user/1000/ctl.sock ./site --target-dir deploy@host:/srv/site
+
+# A key and a known_hosts file that live outside ~/.ssh.
+basicopy -o IdentityFile=/keys/deploy -o UserKnownHostsFile=/keys/known_hosts ./site --target-dir host:/srv/site
+```
+
+basicopy does not read the options. It passes each to every ssh process it starts. That includes the connections that widen the pool. ssh keeps the first value it sees for a setting. The order on the command line is the precedence:
+
+| Source | Wins over |
+|---|---|
+| `BatchMode=yes`, `ConnectTimeout=10` on a pool-widening connection | everything below |
+| the user and port written in the path (`user@host`, `ssh://host:port`) | `-o User`, `-o Port` |
+| `-o` | `~/.ssh/config` |
+
+A control socket carries every connection as a session on the login, whether it comes from `-o ControlPath` or from `ControlMaster` in your config. Nothing prompts twice. `sshd` limits the sessions on one login (`MaxSessions`, 10 unless the server says otherwise). Past that limit ssh reports `Session open refused by peer` and tries a login of its own. If that login needs a prompt the pool stops growing and the copy continues on the connections it has.
 
 ## Connections (automatic, like everything else)
 
@@ -81,6 +104,7 @@ These are protocol limits, not omissions. Everything else — content, mode, mti
 |---|---|
 | No inode numbers or link counts | Hardlinks in a **remote source** cannot be detected, so linked files are copied individually. Said once under `--verbose`. A local source copied to a remote destination keeps its hardlinks. |
 | No `st_dev` | `--one-file-system` cannot see a mount point inside a remote source. |
+| No attribute change that stops at a link | A symlink recreated on a **remote destination** gets the login's owner, not the source link's. Setting it would change the file the link points at. |
 | No xattr operations | Extended attributes, and the Linux ACLs that ride on them, are not copied when either end is remote. Mode, owner, and times still are. |
 | Whole-second mtimes (SFTP v3) | Preserved times are truncated to the second. The unchanged-file comparison already tolerates one second, so re-runs still skip correctly. |
 | No server-side copy or reflink | The kernel fast paths (`FICLONE`, `copy_file_range`, sparse hole-skipping) are local-to-local only; a remote copy streams bytes. Sparse files are written dense on the far side. |
@@ -90,4 +114,4 @@ These are protocol limits, not omissions. Everything else — content, mode, mti
 
 ## How it is tested
 
-`internal/vfs` and the engine's remote tests run against an **in-process SFTP server** (`pkg/sftp`'s server implementation) wired to the client through pipes, via the `vfs.StartTransport` seam. Real packets, real handles, real attribute round trips, real extension negotiation — only the ssh subprocess is absent. The tests need no network, no credentials, and no `ssh` binary while still exercising the code that runs against a real host. The ssh command line itself is covered separately as a pure function (`sshArgs`).
+`internal/vfs` and the engine's remote tests run against an **in-process SFTP server** (`pkg/sftp`'s server implementation) wired to the client through pipes, via the `vfs.StartTransport` seam. Real packets, real handles, real attribute round trips, real extension negotiation — only the ssh subprocess is absent. The tests need no network, no credentials, and no `ssh` binary while still exercising the code that runs against a real host. The ssh command line itself is covered separately as a pure function (`sshArgs`). `dats/ssh.dats` checks it on the built binary, with a stand-in `ssh` on `PATH` that records its arguments.

@@ -50,7 +50,7 @@ func testFS(t *testing.T) FS {
 
 	loc, err := Parse("somehost:/")
 	require.NoError(t, err)
-	fsys, err := Dial(loc, nil, nil)
+	fsys, err := Dial(loc, nil, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fsys.Close() })
 	return fsys

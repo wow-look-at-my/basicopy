@@ -75,6 +75,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		},
 	}
 	r.reg.Diag = &lineWriter{r: r}
+	r.reg.SSHOptions = opts.SSHOptions
 	if vfs.AnyRemote(opts.Sources...) || vfs.AnyRemote(opts.TargetDir, opts.TargetFile) {
 		if person, ok := findPerson(); ok {
 			r.reg.Human = &prompter{r: r, ctx: ctx, person: person}

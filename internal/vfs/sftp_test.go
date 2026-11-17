@@ -129,6 +129,7 @@ func TestRemoteMetadata(t *testing.T) {
 	uid, gid, ok := fsys.Owner(fi)
 	require.True(t, ok, "SFTP attributes carry uid/gid")
 	require.NoError(t, fsys.Chown(path, uid, gid))
+	assert.True(t, Unsupported(fsys.Lchown(path, uid, gid)), "SFTP cannot set an owner without following a link")
 
 	// Capabilities SFTP does not have must report unavailable rather than lie.
 	_, _, ok = fsys.FileID(fi)
