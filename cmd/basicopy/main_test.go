@@ -132,6 +132,19 @@ func TestRootCommandCopies(t *testing.T) {
 	require.NoError(t, err, "the root command should copy the tree")
 }
 
+func TestRootCommandCollectsSSHOptions(t *testing.T) {
+	t.Serial()
+	src, dst := mkTree(t)
+	opts = options.Options{}
+	bufferStr = ""
+	rootCmd.SetArgs([]string{src, "--target-dir", dst, "--progress", "never",
+		"-o", "ControlPath=/run/ctl.sock", "--ssh-option", "IdentityFile=/keys/deploy"})
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	require.NoError(t, rootCmd.Execute())
+	assert.Equal(t, []string{"ControlPath=/run/ctl.sock", "IdentityFile=/keys/deploy"}, opts.SSHOptions)
+}
+
 func TestRootCommandBadBuffer(t *testing.T) {
 	t.Serial()
 	opts = options.Options{}

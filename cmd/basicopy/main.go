@@ -35,7 +35,11 @@ Any SRC or destination may name a remote host, as scp does. Connections use
 your own ssh, so ~/.ssh/config, agents, and host keys apply unchanged:
   basicopy ~/photos --target-dir myotherpc:/home/mhayine/backup
   basicopy myotherpc:/srv/data --target-dir ./local
-  basicopy notes.txt --target-file ssh://me@host:2222/srv/notes.txt`,
+  basicopy notes.txt --target-file ssh://me@host:2222/srv/notes.txt
+
+An ssh option that is not in ~/.ssh/config goes through -o, as with scp. That
+covers a control socket some other ssh already opened:
+  basicopy -o ControlPath=/run/user/1000/ctl.sock ./site --target-dir host:/srv`,
 	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -67,6 +71,9 @@ func init() {
 	// Scaling / performance (the tool self-tunes; these are escape hatches).
 	f.IntVar(&opts.MaxThreads, "max-threads", 0, "optional hard cap on the autoscaler (0 = auto)")
 	f.StringVar(&bufferStr, "buffer", "", "override the device-adaptive buffer size (e.g. 4MiB)")
+
+	// Remote hosts.
+	f.StringArrayVarP(&opts.SSHOptions, "ssh-option", "o", nil, "pass an option to ssh in ssh_config format, as ssh -o does (repeatable), e.g. -o ControlPath=/run/user/1000/ctl.sock")
 
 	// Selection.
 	f.StringArrayVar(&opts.Exclude, "exclude", nil, "skip paths matching this glob (repeatable)")

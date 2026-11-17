@@ -28,6 +28,9 @@ type Options struct {
 	MaxThreads int
 	BufferSize int64
 
+	// SSHOptions go to every ssh process as -o arguments, in ssh_config format.
+	SSHOptions []string
+
 	// Selection.
 	Exclude       []string // glob patterns to skip.
 	Include       []string // glob patterns to re-include under an exclude.

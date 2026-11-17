@@ -69,6 +69,8 @@ type FS interface {
 	Rename(from, to string) error
 	Chmod(name string, mode os.FileMode) error
 	Chown(name string, uid, gid int) error
+	// Lchown sets the owner of a symlink itself and never touches the target.
+	Lchown(name string, uid, gid int) error
 	Chtimes(name string, atime, mtime time.Time) error
 
 	// Content.

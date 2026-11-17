@@ -75,6 +75,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 		},
 	}
 	r.reg.Diag = &lineWriter{r: r}
+	r.reg.SSHOptions = opts.SSHOptions
 	defer r.reg.Close()
 	fsx.SetXattrSkipReport(func(path, name string, err error) {
 		if name == "" {
