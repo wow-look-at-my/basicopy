@@ -26,7 +26,7 @@ jobs:
       # The suites need the host's node and the xattr tools, which only bwrap shares. The docker fallback image has neither. The Go tests of ssh prompts run the real ssh against a real sshd.
       - uses: wow-look-at-my/actions@cached-apt#latest
         with:
-          packages: attr bubblewrap openssh-client openssh-server
+          packages: attr bubblewrap openssh-client openssh-server openssh-tests
       - name: Let bwrap open a user namespace
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: wow-look-at-my/go-toolchain@lkgb

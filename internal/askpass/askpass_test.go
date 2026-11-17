@@ -248,6 +248,37 @@ func TestNotifyReachesThePerson(t *testing.T) {
 	assert.Zero(t, h.askCount())
 }
 
+// TestSessionCloseEndsAWaitingHelper: the copy stops an ssh that waits for a
+// touch. Its notifier must end too, because it holds the output pipe of that ssh.
+func TestSessionCloseEndsAWaitingHelper(t *testing.T) {
+	b, h := startBroker(t)
+	extra := b.Session("pc", false)
+	other := b.Session("pc", false)
+
+	wait := func(s *Session) <-chan int {
+		done := make(chan int, 1)
+		go func() {
+			var out bytes.Buffer
+			done <- helper(envOf(s, "SSH_ASKPASS_PROMPT=none"), 200, []string{"Confirm user presence"}, &out)
+		}()
+		return done
+	}
+	extraDone, otherDone := wait(extra), wait(other)
+	require.Eventually(t, func() bool { return len(h.noteList()) == 2 }, 5*time.Second, 5*time.Millisecond)
+
+	extra.Close()
+	select {
+	case <-extraDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the helper must end when its session closes")
+	}
+	select {
+	case <-otherDone:
+		t.Fatal("a helper of another connection must keep its wait")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 // TestStrangerGetsNothing: a process without the token, or with a closed
 // session, gets no answer and reaches nobody.
 func TestStrangerGetsNothing(t *testing.T) {

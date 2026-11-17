@@ -154,6 +154,7 @@ type Session struct {
 	// Guarded by b.mu.
 	given  map[asker]bool
 	refuse func(prompt string)
+	open   set.Set[net.Conn] // the helpers of this connection that wait now
 }
 
 // Session registers one ssh connection to host. An interactive connection may
@@ -200,6 +201,10 @@ next:
 func (s *Session) Close() {
 	s.b.mu.Lock()
 	delete(s.b.sessions, s.id)
+	// A helper that still waits holds the output pipe of its ssh open. End it, so the pipe closes.
+	for c := range s.open.All() {
+		_ = c.Close()
+	}
 	s.b.mu.Unlock()
 }
 
@@ -233,10 +238,18 @@ func (b *Broker) handle(c net.Conn) {
 	}
 	b.mu.Lock()
 	s := b.sessions[req.Session]
+	if s != nil {
+		s.open.Add(c)
+	}
 	b.mu.Unlock()
 	if s == nil {
 		return
 	}
+	defer func() {
+		b.mu.Lock()
+		s.open.Remove(c)
+		b.mu.Unlock()
+	}()
 	if req.Kind == kindNotify {
 		b.human.Notify(s.host, !s.interactive, req.Prompt)
 		// ssh stops the helper when the action is done.

@@ -85,18 +85,8 @@ func startSSH(c Connect) (*Transport, error) {
 	argv := sshArgs(c.Loc, c.SSHOpts, c.Extra, batch)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stderr = c.Stderr
-	var proc atomic.Pointer[os.Process]
-	if session != nil {
-		cmd.Env = session.Env(os.Environ())
-		session.OnRefuse(func(prompt string) {
-			fmt.Fprintf(c.Stderr, "ssh: %s: another connection asks %q, and only you can answer that; the copy keeps the connections it has\n",
-				hostLabel(c.Loc), firstLine(prompt))
-			// Stop ssh before it sends an empty answer to the host.
-			if p := proc.Load(); p != nil {
-				_ = p.Kill()
-			}
-		})
-	}
+	// A child of ssh (its key helper, its notifier) can outlive it and hold these pipes. Do not wait for that child.
+	cmd.WaitDelay = time.Second
 	fail := func(err error) (*Transport, error) {
 		if session != nil {
 			session.Close()
@@ -111,6 +101,27 @@ func startSSH(c Connect) (*Transport, error) {
 	if err != nil {
 		return fail(err)
 	}
+	var proc atomic.Pointer[os.Process]
+	// kill stops this ssh at once, also while it waits for a touch or an answer.
+	kill := func() {
+		if session != nil {
+			session.Close()
+		}
+		if p := proc.Load(); p != nil {
+			_ = p.Kill()
+		}
+		// The notifier of ssh inherits this pipe, so the end of ssh alone does not close it.
+		_ = stdout.Close()
+	}
+	if session != nil {
+		cmd.Env = session.Env(os.Environ())
+		session.OnRefuse(func(prompt string) {
+			fmt.Fprintf(c.Stderr, "ssh: %s: another connection asks %q, and only you can answer that; the copy keeps the connections it has\n",
+				hostLabel(c.Loc), firstLine(prompt))
+			// Stop ssh before it sends an empty answer to the host.
+			kill()
+		})
+	}
 	// The first Ctrl-C lets the copy drain its queue, which needs the connection alive.
 	if err := interrupt.Shield(cmd.Start); err != nil {
 		return fail(fmt.Errorf("start ssh: %w", err))
@@ -120,7 +131,7 @@ func startSSH(c Connect) (*Transport, error) {
 	return &Transport{
 		Stdout: stdout,
 		Stdin:  stdin,
-		Kill:   func() { _ = cmd.Process.Kill() },
+		Kill:   kill,
 		Close: func() error {
 			defer untrack(cmd.Process)
 			if session != nil {

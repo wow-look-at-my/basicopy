@@ -173,7 +173,7 @@ func startHost(t *testing.T, spec hostSpec) (host, knownHosts, dir string) {
 		runTool(t, tools["ssh-keygen"], "-q", "-t", "ed25519-sk", "-w", provider, "-N", spec.passphrase, "-f", userKey)
 		keyOptions = "  SecurityKeyProvider " + provider + "\n"
 		touch := filepath.Join(dir, "touch-helper")
-		script := fmt.Sprintf(startHostSh, touchDelay, filepath.Join(dir, "no-touch"), helper)
+		script := fmt.Sprintf(startHostSh, touchDelay, filepath.Join(dir, "no-touch"), filepath.Join(dir, "slow-touch"), helper)
 		require.NoError(t, os.WriteFile(touch, []byte(script), 0o755))
 		t.Setenv("SSH_SK_HELPER", touch)
 	} else {
@@ -472,6 +472,42 @@ func TestSecurityKeyWithoutATouchKeepsThePool(t *testing.T) {
 	assert.True(t, frozen)
 	assert.Len(t, human.touchRequests(), 1, "the request was shown, and no second one after the refusal")
 	assert.Contains(t, diag.String(), "Permission denied", "ssh's own words reach the person")
+}
+
+// TestCloseEndsALoginThatWaitsForATouch: the copy is done while a pool
+// connection still waits for its touch. Close must stop that ssh and return.
+// ssh's notifier holds the output pipe of ssh, so the end of ssh alone is not
+// enough to end the wait.
+func TestCloseEndsALoginThatWaitsForATouch(t *testing.T) {
+	host, _, dir := startHost(t, hostSpec{knownHost: true, securityKey: true})
+	human := &scriptedHuman{}
+	var diag syncBuffer
+	reg := NewRegistry()
+	reg.Human = human
+	reg.Diag = &diag
+
+	path := tempFileOnHost(t)
+	fsys, _, err := reg.Resolve(host + ":" + path)
+	require.NoError(t, err, "diagnostics: %s", diag.String())
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "slow-touch"), nil, 0o600))
+	rf := fsys.(*remoteFS)
+	rf.mu.Lock()
+	rf.startDialLocked()
+	rf.mu.Unlock()
+	require.Eventually(t, func() bool { return len(human.touchRequests()) == 1 }, 10*time.Second, 10*time.Millisecond,
+		"the pool connection must reach its touch request")
+
+	closed := make(chan error, 1)
+	go func() { closed <- reg.Close() }()
+	select {
+	case err := <-closed:
+		assert.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not return while a login waited for a touch")
+	}
+	open, _ := fsys.(Pooled).Pool()
+	assert.Equal(t, 1, open, "the login that waited must not join the pool")
 }
 
 func TestFirstLine(t *testing.T) {
