@@ -85,6 +85,12 @@ func startSSH(c Connect) (*Transport, error) {
 	argv := sshArgs(c.Loc, c.SSHOpts, c.Extra, batch)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stderr = c.Stderr
+	// The first connection keeps the real stderr, so ssh sees a terminal there.
+	var mute *mutedWriter
+	if c.Extra {
+		mute = &mutedWriter{w: c.Stderr}
+		cmd.Stderr = mute
+	}
 	// A child of ssh (its key helper, its notifier) can outlive it and hold these pipes. Do not wait for that child.
 	cmd.WaitDelay = time.Second
 	fail := func(err error) (*Transport, error) {
@@ -104,6 +110,10 @@ func startSSH(c Connect) (*Transport, error) {
 	var proc atomic.Pointer[os.Process]
 	// kill stops this ssh at once, also while it waits for a touch or an answer.
 	kill := func() {
+		// A helper of the stopped ssh can still report its lost pipe. That is not news.
+		if mute != nil {
+			mute.off.Store(true)
+		}
 		if session != nil {
 			session.Close()
 		}
@@ -150,6 +160,19 @@ func startSSH(c Connect) (*Transport, error) {
 			return nil
 		},
 	}, nil
+}
+
+// mutedWriter passes writes on until off is set. After that it drops them.
+type mutedWriter struct {
+	w   io.Writer
+	off atomic.Bool
+}
+
+func (m *mutedWriter) Write(p []byte) (int, error) {
+	if m.off.Load() {
+		return len(p), nil
+	}
+	return m.w.Write(p)
 }
 
 // firstLine cuts a prompt to one short line for a message.

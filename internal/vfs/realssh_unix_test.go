@@ -508,6 +508,19 @@ func TestCloseEndsALoginThatWaitsForATouch(t *testing.T) {
 	}
 	open, _ := fsys.(Pooled).Pool()
 	assert.Equal(t, 1, open, "the login that waited must not join the pool")
+	assert.Empty(t, diag.String(), "an ssh that the copy stopped has nothing to report")
+}
+
+func TestMutedWriter(t *testing.T) {
+	var out bytes.Buffer
+	m := &mutedWriter{w: &out}
+	_, err := m.Write([]byte("kept\n"))
+	require.NoError(t, err)
+	m.off.Store(true)
+	n, err := m.Write([]byte("dropped\n"))
+	require.NoError(t, err)
+	assert.Equal(t, 8, n)
+	assert.Equal(t, "kept\n", out.String())
 }
 
 func TestFirstLine(t *testing.T) {
