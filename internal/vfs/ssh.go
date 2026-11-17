@@ -235,7 +235,7 @@ func Dial(loc Location, diag io.Writer, prompts *askpass.Broker) (FS, error) {
 		// An agent can hold a dial for a touch that this process cannot see. Say so one time.
 		note := time.AfterFunc(authNoteDelay, func() {
 			if noted.CompareAndSwap(false, true) {
-				fmt.Fprintf(diag, "ssh: %s: another connection still authenticates; a key that needs a touch or an approval waits for it now\n", hostLabel(loc))
+				fmt.Fprintf(diag, "ssh: %s: another connection has not logged in yet; if your key needs a touch or an approval, it waits for that now\n", hostLabel(loc))
 			}
 		})
 		defer note.Stop()

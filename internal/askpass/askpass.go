@@ -65,6 +65,8 @@ type Broker struct {
 	sessions map[string]*Session
 	next     int
 	heard    bool
+	open     map[net.Conn]struct{} // helper connections that wait for an answer
+	closed   bool
 }
 
 // Start opens a Broker that asks human.
@@ -88,6 +90,7 @@ func Start(human Human) (*Broker, error) {
 		self:     self,
 		answers:  map[string]string{},
 		sessions: map[string]*Session{},
+		open:     map[net.Conn]struct{}{},
 	}
 	go b.serve()
 	return b, nil
@@ -103,7 +106,34 @@ func selfPath() (string, error) {
 }
 
 // Close stops the Broker. A helper that waits gets no answer.
-func (b *Broker) Close() error { return b.ln.Close() }
+func (b *Broker) Close() error {
+	err := b.ln.Close()
+	b.mu.Lock()
+	b.closed = true
+	for c := range b.open {
+		_ = c.Close()
+	}
+	b.mu.Unlock()
+	return err
+}
+
+// hold records a helper connection, so Close can end it. It reports false after Close.
+func (b *Broker) hold(c net.Conn) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return false
+	}
+	b.open[c] = struct{}{}
+	return true
+}
+
+func (b *Broker) drop(c net.Conn) {
+	b.mu.Lock()
+	delete(b.open, c)
+	b.mu.Unlock()
+	_ = c.Close()
+}
 
 // Heard reports whether an ssh process got an answer through this Broker. It
 // proves that the ssh on this machine sends its prompts here.
@@ -186,7 +216,11 @@ func (b *Broker) serve() {
 const requestTimeout = 10 * time.Second
 
 func (b *Broker) handle(c net.Conn) {
-	defer c.Close()
+	if !b.hold(c) {
+		_ = c.Close()
+		return
+	}
+	defer b.drop(c)
 	_ = c.SetReadDeadline(time.Now().Add(requestTimeout))
 	var req request
 	if err := json.NewDecoder(c).Decode(&req); err != nil {
