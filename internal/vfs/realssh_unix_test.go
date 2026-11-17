@@ -2,6 +2,8 @@
 
 package vfs
 
+import _ "embed"
+
 import (
 	"bytes"
 	"fmt"
@@ -171,7 +173,7 @@ func startHost(t *testing.T, spec hostSpec) (host, knownHosts, dir string) {
 		runTool(t, tools["ssh-keygen"], "-q", "-t", "ed25519-sk", "-w", provider, "-N", spec.passphrase, "-f", userKey)
 		keyOptions = "  SecurityKeyProvider " + provider + "\n"
 		touch := filepath.Join(dir, "touch-helper")
-		script := fmt.Sprintf("#!/bin/sh\nsleep %s\n[ -e '%s' ] && exit 1\nexec '%s' \"$@\"\n", touchDelay, filepath.Join(dir, "no-touch"), helper)
+		script := fmt.Sprintf(startHostSh, touchDelay, filepath.Join(dir, "no-touch"), helper)
 		require.NoError(t, os.WriteFile(touch, []byte(script), 0o755))
 		t.Setenv("SSH_SK_HELPER", touch)
 	} else {
@@ -494,3 +496,6 @@ func TestNobodyAnswersFailsTheFirstConnection(t *testing.T) {
 	assert.NotEmpty(t, human.questions())
 	assert.True(t, strings.Contains(err.Error(), host), err.Error())
 }
+
+//go:embed testdata/start-host.sh
+var startHostSh string
