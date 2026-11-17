@@ -23,7 +23,7 @@ func slowRemote(t *testing.T, hydration time.Duration) {
 	t.Helper()
 	t.Serial()
 	old := vfs.StartTransport
-	vfs.StartTransport = func(vfs.Location, bool, io.Writer) (*vfs.Transport, error) {
+	vfs.StartTransport = func(vfs.Connect) (*vfs.Transport, error) {
 		return startSlowServer(hydration)
 	}
 	t.Cleanup(func() { vfs.StartTransport = old })

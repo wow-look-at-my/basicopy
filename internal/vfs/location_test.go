@@ -78,16 +78,21 @@ func TestAnyRemote(t *testing.T) {
 func TestSSHArgs(t *testing.T) {
 	loc, err := Parse("ssh://me@pc:2222/srv")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ssh", "-p", "2222", "-l", "me", "-s", "pc", "sftp"}, sshArgs(loc, false))
+	assert.Equal(t, []string{"ssh", "-p", "2222", "-l", "me", "-s", "pc", "sftp"}, sshArgs(loc, false, false))
 
-	// A connection opened to widen the pool must never be able to prompt.
+	// A connection opened to widen the pool must never prompt on the terminal by itself.
 	assert.Equal(t,
 		[]string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
-		sshArgs(loc, true))
+		sshArgs(loc, true, true))
+
+	// With its prompts answered by the broker, it drops BatchMode so a passphrase can reach the key.
+	assert.Equal(t,
+		[]string{"ssh", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
+		sshArgs(loc, true, false))
 
 	plain, err := Parse("pc:/srv")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ssh", "-s", "pc", "sftp"}, sshArgs(plain, false),
+	assert.Equal(t, []string{"ssh", "-s", "pc", "sftp"}, sshArgs(plain, false, false),
 		"with no user or port, ssh is left to consult the user's own config")
 }
 
