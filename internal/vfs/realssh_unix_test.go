@@ -125,6 +125,8 @@ type hostSpec struct {
 	passphrase string
 	// securityKey makes the key one that a security key holds, so each login needs a touch.
 	securityKey bool
+	// oldSSH makes ssh act as one from before SSH_ASKPASS_REQUIRE.
+	oldSSH bool
 }
 
 // need finds a program that the test cannot run without. CI must have it.
@@ -253,6 +255,9 @@ Subsystem sftp internal-sftp
 	bin := filepath.Join(dir, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o755))
 	wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' -F '%s' \"$@\"\n", tools["ssh"], clientConfig)
+	if spec.oldSSH {
+		wrapper = fmt.Sprintf(oldSSHSh, filepath.Join(dir, "ssh-commands"), tools["ssh"], clientConfig)
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "ssh"), []byte(wrapper), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return host, knownHosts, dir
@@ -511,6 +516,79 @@ func TestCloseEndsALoginThatWaitsForATouch(t *testing.T) {
 	assert.Empty(t, diag.String(), "an ssh that the copy stopped has nothing to report")
 }
 
+// TestOldSSHSendsItsPromptsToTheCopy: an ssh from before SSH_ASKPASS_REQUIRE
+// uses an askpass program only with no terminal and a display. The copy starts
+// it that way, so a key with a passphrase still asks one time and widens the
+// pool.
+func TestOldSSHSendsItsPromptsToTheCopy(t *testing.T) {
+	host, _, dir := startHost(t, hostSpec{knownHost: true, passphrase: testPassphrase, oldSSH: true})
+	t.Setenv("DISPLAY", "")
+	t.Setenv("WAYLAND_DISPLAY", "")
+	human := &scriptedHuman{answers: []string{testPassphrase}}
+	var diag syncBuffer
+	reg := NewRegistry()
+	reg.Human = human
+	reg.Diag = &diag
+	t.Cleanup(func() { _ = reg.Close() })
+
+	path := tempFileOnHost(t)
+	fsys, _, err := reg.Resolve(host + ":" + path)
+	require.NoError(t, err, "diagnostics: %s", diag.String())
+
+	widen(t, fsys, path, 2)
+	open, frozen := fsys.(Pooled).Pool()
+	assert.Equal(t, 3, open, "diagnostics: %s", diag.String())
+	assert.False(t, frozen, "diagnostics: %s", diag.String())
+	assert.Len(t, human.questions(), 1, "the person must type the passphrase one time")
+
+	commands, err := os.ReadFile(filepath.Join(dir, "ssh-commands"))
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(commands)), "\n")
+	require.Len(t, lines, 4, "one version question and three logins: %q", lines)
+	assert.Equal(t, "-V", lines[0])
+	for _, login := range lines[1:] {
+		assert.True(t, strings.HasPrefix(login, "-x "), "X11 forwarding must be off for the placeholder display: %q", login)
+		assert.NotContains(t, login, "BatchMode", "a login that gets its answer from the copy must be free to ask")
+	}
+}
+
+func TestParseSSHVersion(t *testing.T) {
+	cases := []struct {
+		banner       string
+		major, minor int
+		ok           bool
+	}{
+		{"OpenSSH_9.6p1 Ubuntu-3ubuntu13.20, OpenSSL 3.0.13 30 Jan 2024\n", 9, 6, true},
+		{"OpenSSH_8.0p1, OpenSSL 1.1.1k  FIPS 25 Mar 2021\n", 8, 0, true},
+		{"OpenSSH_for_Windows_9.5p1, LibreSSL 3.8.2\n", 9, 5, true},
+		{"OpenSSH_10.0p2, OpenSSL 3.5.0\n", 10, 0, true},
+		{"OpenSSH_7.4p1, OpenSSL 1.0.2k-fips  26 Jan 2017\n", 7, 4, true},
+		{"Dropbear v2022.83\n", 0, 0, false},
+		{"OpenSSH_p1\n", 0, 0, false},
+		{"OpenSSH_9\n", 0, 0, false},
+		{"", 0, 0, false},
+	}
+	for _, c := range cases {
+		major, minor, ok := parseSSHVersion(c.banner)
+		assert.Equal(t, c.ok, ok, c.banner)
+		if c.ok {
+			assert.Equal(t, [2]int{c.major, c.minor}, [2]int{major, minor}, c.banner)
+		}
+	}
+}
+
+func TestWithDisplay(t *testing.T) {
+	env, added := withDisplay([]string{"HOME=/home/me", "DISPLAY="})
+	assert.True(t, added)
+	assert.Equal(t, []string{"HOME=/home/me", "DISPLAY=", placeholderDisplay}, env)
+
+	for _, real := range []string{"DISPLAY=:0", "WAYLAND_DISPLAY=wayland-0"} {
+		env, added = withDisplay([]string{"HOME=/home/me", real})
+		assert.False(t, added, real)
+		assert.Equal(t, []string{"HOME=/home/me", real}, env)
+	}
+}
+
 func TestMutedWriter(t *testing.T) {
 	var out bytes.Buffer
 	m := &mutedWriter{w: &out}
@@ -548,3 +626,6 @@ func TestNobodyAnswersFailsTheFirstConnection(t *testing.T) {
 
 //go:embed testdata/start-host.sh
 var startHostSh string
+
+//go:embed testdata/old-ssh.sh
+var oldSSHSh string

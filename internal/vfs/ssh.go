@@ -39,6 +39,8 @@ type Connect struct {
 	Prompts *askpass.Broker
 	// SSHOpts are ssh_config options that this connection passes as -o arguments.
 	SSHOpts []string
+	// NoTerminal starts ssh with no terminal of its own.
+	NoTerminal bool
 }
 
 // StartTransport is a var so tests can swap in an in-process SFTP server.
@@ -125,6 +127,14 @@ func startSSH(c Connect) (*Transport, error) {
 	}
 	if session != nil {
 		cmd.Env = session.Env(os.Environ())
+		if c.NoTerminal {
+			startWithoutTerminal(cmd)
+			var placeholder bool
+			if cmd.Env, placeholder = withDisplay(cmd.Env); placeholder {
+				// ssh must not try X11 forwarding to a display that does not exist.
+				cmd.Args = append([]string{cmd.Args[0], "-x"}, cmd.Args[1:]...)
+			}
+		}
 		session.OnRefuse(func(prompt string) {
 			fmt.Fprintf(c.Stderr, "ssh: %s: another connection asks %q, and only you can answer that; the copy keeps the connections it has\n",
 				hostLabel(c.Loc), firstLine(prompt))
@@ -261,11 +271,11 @@ var authNoteDelay = 5 * time.Second
 // Connections that widen the pool write their diagnostics to diag (nil means
 // os.Stderr). prompts (optional) answers the questions of every connection, and
 // every connection gets sshOpts.
-func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broker) (FS, error) {
+func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broker, noTerminal bool) (FS, error) {
 	if !loc.Remote {
 		return Local, nil
 	}
-	first, err := dialConn(Connect{Loc: loc, Stderr: os.Stderr, Prompts: prompts, SSHOpts: sshOpts}, nil)
+	first, err := dialConn(Connect{Loc: loc, Stderr: os.Stderr, Prompts: prompts, SSHOpts: sshOpts, NoTerminal: noTerminal}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +291,7 @@ func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broke
 			}
 		})
 		defer note.Stop()
-		return dialConn(Connect{Loc: loc, Extra: true, Stderr: diag, Prompts: prompts, SSHOpts: sshOpts}, stop)
+		return dialConn(Connect{Loc: loc, Extra: true, Stderr: diag, Prompts: prompts, SSHOpts: sshOpts, NoTerminal: noTerminal}, stop)
 	}), nil
 }
 
@@ -305,6 +315,8 @@ type Registry struct {
 	mu      sync.Mutex
 	conns   map[string]FS
 	prompts *askpass.Broker
+	// noTerminal is set with prompts, for an ssh that predates SSH_ASKPASS_REQUIRE.
+	noTerminal bool
 }
 
 // brokerLocked starts the prompt broker on the first remote dial. Without one
@@ -330,6 +342,7 @@ func (r *Registry) brokerLocked() *askpass.Broker {
 		return nil
 	}
 	r.prompts = b
+	r.noTerminal = sshNeedsNoTerminal()
 	return b
 }
 
@@ -366,7 +379,8 @@ func (r *Registry) For(loc Location) (FS, error) {
 	if fs, ok := r.conns[key]; ok {
 		return fs, nil
 	}
-	fs, err := Dial(loc, r.SSHOptions, r.Diag, r.brokerLocked())
+	prompts := r.brokerLocked()
+	fs, err := Dial(loc, r.SSHOptions, r.Diag, prompts, r.noTerminal)
 	if err != nil {
 		return nil, err
 	}

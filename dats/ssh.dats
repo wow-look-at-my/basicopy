@@ -39,33 +39,32 @@ tests:
 	  cmd: |
 		mkdir -p {outputs.bin} {outputs.src}
 		printf '%s\n' '#!/bin/sh' 'echo "shown: $1" >> "$FAKE_SSH_OUT"' 'echo hunter2' > {outputs.bin}/askpass
-		printf '%s\n' '#!/bin/sh' 'echo "require=$SSH_ASKPASS_REQUIRE" >> "$FAKE_SSH_OUT"' \
-			'answer=$("$SSH_ASKPASS" "Enter passphrase for key: ")' 'echo "answer=$answer" >> "$FAKE_SSH_OUT"' 'exit 1' > {outputs.bin}/ssh
+		cp dats/fakessh/ssh.sh {outputs.bin}/ssh
 		chmod +x {outputs.bin}/ssh {outputs.bin}/askpass
 		echo hello > {outputs.src}/a.txt
-		export FAKE_SSH_OUT={outputs.bin}/out
+		export FAKE_SSH_OUT={outputs.bin}/out FAKE_SSH_VERSION=9.6p1
+		unset DISPLAY WAYLAND_DISPLAY
 		SSH_ASKPASS={outputs.bin}/askpass SSH_ASKPASS_REQUIRE=force PATH="{outputs.bin}:$PATH" \
 			"$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {outputs.src} -q --target-dir pc:/srv
 		echo "exit=$?"
-		cat {outputs.bin}/out
+		grep -v '^terminal=' {outputs.bin}/out
 	  outputs:
 		stdout:
 			0: "^exit=1$"
-			1: "^require=force$"
+			1: "^display=none require=force args=-s pc sftp$"
 			2: "^shown: Enter passphrase for key: $"
 			3: "^answer=hunter2$"
 
 	# script gives the copy a terminal. The typed line comes after the prompt has turned the echo off.
-	- desc: on a terminal the copy shows the prompt of ssh there, reads the answer with no echo, and ssh gets it
+	- desc: on a terminal the copy shows the prompt of ssh there, reads the answer with no echo, and ssh keeps its terminal
 	  cmd: |
 		mkdir -p {outputs.bin} {outputs.src}
-		printf '%s\n' '#!/bin/sh' 'answer=$("$SSH_ASKPASS" "Enter passphrase for key: ")' \
-			'echo "answer=$answer" >> "$FAKE_SSH_OUT"' 'exit 1' > {outputs.bin}/ssh
+		cp dats/fakessh/ssh.sh {outputs.bin}/ssh
 		chmod +x {outputs.bin}/ssh
 		echo hello > {outputs.src}/a.txt
-		export FAKE_SSH_OUT={outputs.bin}/out
+		export FAKE_SSH_OUT={outputs.bin}/out FAKE_SSH_VERSION=9.6p1
 		export PATH="{outputs.bin}:$PATH"
-		unset SSH_ASKPASS SSH_ASKPASS_REQUIRE
+		unset SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY WAYLAND_DISPLAY
 		if script --version > /dev/null 2>&1; then
 			(sleep 2; echo hunter2; sleep 2) | script -qc "$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy {outputs.src} -q --target-dir pc:/srv" /dev/null > {outputs.bin}/screen 2>&1
 		else
@@ -76,6 +75,34 @@ tests:
 		echo "echoed=$(grep -c hunter2 {outputs.bin}/screen)"
 	  outputs:
 		stdout:
-			0: "^answer=hunter2$"
-			1: "^prompts=1$"
-			2: "^echoed=0$"
+			0: "^terminal=yes$"
+			1: "^display=none require=force args=-s pc sftp$"
+			2: "^answer=hunter2$"
+			3: "^prompts=1$"
+			4: "^echoed=0$"
+
+	# An ssh from before SSH_ASKPASS_REQUIRE asks on its terminal when it has one. The copy starts it with none.
+	- desc: an old ssh starts with no terminal and with a display, so its prompt comes to the copy too
+	  cmd: |
+		mkdir -p {outputs.bin} {outputs.src}
+		cp dats/fakessh/ssh.sh {outputs.bin}/ssh
+		chmod +x {outputs.bin}/ssh
+		echo hello > {outputs.src}/a.txt
+		export FAKE_SSH_OUT={outputs.bin}/out FAKE_SSH_VERSION=8.0p1
+		export PATH="{outputs.bin}:$PATH"
+		unset SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY WAYLAND_DISPLAY
+		if script --version > /dev/null 2>&1; then
+			(sleep 2; echo hunter2; sleep 2) | script -qc "$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy {outputs.src} -q --target-dir pc:/srv" /dev/null > {outputs.bin}/screen 2>&1
+		else
+			(sleep 2; echo hunter2; sleep 2) | script -q /dev/null "$GO_TOOLCHAIN_DATS_BUILD_DIR/basicopy" {outputs.src} -q --target-dir pc:/srv > {outputs.bin}/screen 2>&1
+		fi
+		cat {outputs.bin}/out
+		echo "prompts=$(grep -c 'Enter passphrase for key: ' {outputs.bin}/screen)"
+		echo "echoed=$(grep -c hunter2 {outputs.bin}/screen)"
+	  outputs:
+		stdout:
+			0: "^terminal=no$"
+			1: "^display=basicopy:0 require=force args=-x -s pc sftp$"
+			2: "^answer=hunter2$"
+			3: "^prompts=1$"
+			4: "^echoed=0$"

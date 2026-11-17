@@ -104,7 +104,8 @@ basicopy makes itself the askpass program of each ssh it starts (`SSH_ASKPASS`, 
 - **A key in an agent waits inside the agent.** basicopy cannot see that request. When a new connection waited a few seconds to log in, basicopy says so once.
 - **Your own askpass program still works.** If your environment sends ssh prompts to a program (`SSH_ASKPASS`), basicopy asks through that program under the rules ssh applies, and still asks once.
 - **With no terminal and no askpass program**, ssh does its own prompting as before and a pool connection runs with `BatchMode=yes`.
-- **An ssh older than OpenSSH `8.4` ignores `SSH_ASKPASS_REQUIRE`** and prompts by itself. basicopy notices that no prompt reached it and keeps `BatchMode=yes` on pool connections. A key with a passphrase stays on one connection there.
+- **An ssh older than OpenSSH `8.4` ignores `SSH_ASKPASS_REQUIRE`.** It uses an askpass program only when it has no terminal. A display is set. basicopy reads the version from `ssh -V` and starts such an ssh that way: in a session of its own. That display is with a placeholder `DISPLAY` and `-x` when you have no display. The result is the same as above. The cost is that a `ProxyCommand` which asks on the terminal by itself cannot ask there. A newer ssh keeps its terminal.
+- **If no prompt ever reaches basicopy**, pool connections keep `BatchMode=yes`, as before.
 - **On a Windows machine this is off**, and ssh prompts as before. There basicopy knows its own location as a path of the form `/c/Users/...`. The native `ssh.exe` cannot start a program by that path.
 - **Ctrl-C at a prompt** ends the prompt. The login fails with ssh's own error.
 
