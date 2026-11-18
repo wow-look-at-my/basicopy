@@ -8,7 +8,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	github.com/wow-look-at-my/go-containers v0.0.0 // go-toolchain:branch=master
-	github.com/wow-look-at-my/tml v0.0.0 // go-toolchain:branch=claude/friendly-ptolemy-ydn2k4
+	github.com/wow-look-at-my/tml v0.0.0 // go-toolchain:branch=master
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	lukechampine.com/blake3 v1.4.1
