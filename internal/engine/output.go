@@ -7,18 +7,16 @@ import (
 	"io"
 )
 
-// printLine writes one full line. The live progress line has no newline, so
-// printLine erases it first and draws it again below the message.
+// printLine writes one full line. While the progress region is up, a line for its
+// terminal goes above the region, so both never share a row.
 func (r *runner) printLine(w io.Writer, format string, a ...any) {
 	r.outMu.Lock()
 	defer r.outMu.Unlock()
-	if r.progress != "" {
-		fmt.Fprint(r.stderr, "\r\033[K")
+	if d := r.display; d != nil && (w == r.stderr || d.stdoutShared) {
+		d.live.Printf(format, a...)
+		return
 	}
 	fmt.Fprintf(w, format+"\n", a...)
-	if r.progress != "" {
-		fmt.Fprint(r.stderr, r.progress)
-	}
 }
 
 func (r *runner) elog(format string, a ...any) {

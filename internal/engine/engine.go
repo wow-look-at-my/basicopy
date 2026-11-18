@@ -222,6 +222,7 @@ type runner struct {
 	// active is the files the workers copy now; draining is set once Ctrl-C stops the walk.
 	active   transfers
 	draining atomic.Bool
+	meter    rateMeter
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
 	renamed, removed                                                        atomic.Int64
