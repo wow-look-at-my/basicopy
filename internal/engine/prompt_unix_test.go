@@ -32,7 +32,7 @@ func scriptPerson(t *testing.T) *askpass.Person {
 // TestPrompterKeepsTheRegionOffTheQuestion: a question takes the progress
 // region off the terminal, and a region comes back after the answer.
 func TestPrompterKeepsTheRegionOffTheQuestion(t *testing.T) {
-	t.Serial()
+	t.Serial("the askpass environment and the region inspector belong to the process")
 	stderr := &syncBuffer{}
 	r := &runner{opts: &options.Options{Progress: "always"}, stdout: io.Discard, stderr: stderr, startedAt: time.Now()}
 	stop := startRegion(t, r)
