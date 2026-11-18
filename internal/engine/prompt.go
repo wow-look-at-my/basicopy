@@ -23,12 +23,17 @@ func (p *prompter) Ask(prompt string, echo bool) (string, bool) {
 	r := p.r
 	r.outMu.Lock()
 	defer r.outMu.Unlock()
-	if r.progress != "" {
-		fmt.Fprint(r.stderr, "\r\033[K")
+	// The question needs the terminal, so the region comes off the screen and returns after the answer.
+	d := r.display
+	if d == nil {
+		return p.person.Ask(p.ctx, prompt, echo)
 	}
+	r.stopRegion()
 	answer, ok := p.person.Ask(p.ctx, prompt, echo)
-	if r.progress != "" {
-		fmt.Fprint(r.stderr, r.progress)
+	if live, err := r.newRegion(); err != nil {
+		fmt.Fprintf(r.stderr, "basicopy: warning: progress display: %v\n", err)
+	} else {
+		r.display = &display{live: live, stdoutShared: d.stdoutShared}
 	}
 	return answer, ok
 }

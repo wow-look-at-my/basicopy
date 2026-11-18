@@ -109,6 +109,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 	go func() {
 		select {
 		case <-ctx.Done():
+			r.draining.Store(true)
 			if !opts.DryRun {
 				r.note("interrupted: no new files; finishing the queue (Ctrl-C again to quit now)")
 			}
@@ -215,8 +216,13 @@ type runner struct {
 	outMu     sync.Mutex
 	stdout    io.Writer
 	stderr    io.Writer
-	progress  string // the live progress line on stderr, "" when none is drawn; guarded by outMu
+	display   *display // the live progress region on stderr, nil when none is drawn; guarded by outMu
 	startedAt time.Time
+
+	// active is the files the workers copy now; draining is set once Ctrl-C stops the walk.
+	active   transfers
+	draining atomic.Bool
+	meter    rateMeter
 
 	files, dirs, symlinks, bytes, skipped, failed, linked, deleted, updated atomic.Int64
 	renamed, removed                                                        atomic.Int64
@@ -356,8 +362,16 @@ func (r *runner) copyOne(job fileJob) {
 		n   int64
 		err error
 	)
+	t := r.active.add(r.transferLabel(job), job.info.Size(), time.Now())
+	defer r.active.remove(t)
+	opts := r.copyOpts
+	opts.Progress = func(n int64) {
+		r.moved.Add(n)
+		t.done.Add(n)
+	}
 	for attempt := 0; ; attempt++ {
-		n, err = fsx.CopyFile(job.srcFS, job.src, r.dfs, job.dst, job.info, r.copyOpts)
+		t.done.Store(0)
+		n, err = fsx.CopyFile(job.srcFS, job.src, r.dfs, job.dst, job.info, opts)
 		if err == nil || isMetaErr(err) || attempt >= maxRetries || !retryable(err) || r.abortErr() != nil {
 			break
 		}

@@ -1,0 +1,40 @@
+<?xml version="1.1" encoding="UTF-8"?>
+<Component xmlns="urn:tml:v1" name="Progress">
+	<Import src="./theme.tml"/>
+
+	<Property name="head" type="string" required="true"/>
+	<Property name="headStyle" type="string" default="head"/>
+	<Property name="status" type="string" default=""/>
+	<Property name="statusStyle" type="string" default="status"/>
+	<Property name="rows" type="record[]" default=""/>
+
+	<!-- One file in flight, or the TOTAL row. The label takes what the fixed columns leave. A narrow terminal drops the bar, then the speed, the ETA and the sizes. -->
+	<DataTemplate name="Transfer">
+		<Property name="label" type="string" required="true"/>
+		<Property name="state" type="enum(active|total|more)" default="active"/>
+		<Property name="known" type="bool" default="true"/>
+		<Property name="value" type="string" default="0"/>
+		<Property name="percent" type="string" default=""/>
+		<Property name="sizes" type="string" default=""/>
+		<Property name="speed" type="string" default=""/>
+		<Property name="eta" type="string" default=""/>
+		<Template>
+			<Grid columns="*[8..40],16,4,22,11,11" gap="2" collapse="1,4,5,3" padding="0 0 0 2">
+				<Text Grid.column="0" style="label.{state}" overflow="ellipsis">{label}</Text>
+				<ProgressBar Grid.column="1" if="{known}" value="{value}" color="{theme.accent}" trackColor="{theme.track}"/>
+				<Text Grid.column="2" if="{known}" align="right">{percent}</Text>
+				<Text Grid.column="3" overflow="clip">{sizes}</Text>
+				<Text Grid.column="4" style="dim" overflow="clip">{speed}</Text>
+				<Text Grid.column="5" style="dim" overflow="clip">{eta}</Text>
+			</Grid>
+		</Template>
+	</DataTemplate>
+
+	<Template>
+		<Stack>
+			<Text id="head" style="{headStyle}" overflow="ellipsis">{head}</Text>
+			<Text id="status" if="{status}" style="{statusStyle}" overflow="ellipsis">{status}</Text>
+			<Stack id="rows" itemsSource="{rows}" itemTemplate="Transfer"/>
+		</Stack>
+	</Template>
+</Component>

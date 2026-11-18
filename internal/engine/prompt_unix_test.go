@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,18 +29,25 @@ func scriptPerson(t *testing.T) *askpass.Person {
 	return person
 }
 
-// TestPrompterKeepsTheProgressLineOffTheQuestion: a question clears the live
-// progress line, and the line comes back after the answer.
-func TestPrompterKeepsTheProgressLineOffTheQuestion(t *testing.T) {
-	t.Serial()
-	var stderr bytes.Buffer
-	r := &runner{opts: &options.Options{}, stdout: io.Discard, stderr: &stderr, progress: "1/2 files"}
+// TestPrompterKeepsTheRegionOffTheQuestion: a question takes the progress
+// region off the terminal, and a region comes back after the answer.
+func TestPrompterKeepsTheRegionOffTheQuestion(t *testing.T) {
+	t.Serial("the askpass environment and the region inspector belong to the process")
+	stderr := &syncBuffer{}
+	r := &runner{opts: &options.Options{Progress: "always"}, stdout: io.Discard, stderr: stderr, startedAt: time.Now()}
+	stop := startRegion(t, r)
+	defer stop()
+	before := r.display
 	p := &prompter{r: r, ctx: context.Background(), person: scriptPerson(t)}
 
 	answer, ok := p.Ask("Enter passphrase for key 'k': ", false)
 	require.True(t, ok)
 	assert.Equal(t, "hunter2", answer)
-	assert.Equal(t, "\r\033[K1/2 files", stderr.String())
+	r.outMu.Lock()
+	after := r.display
+	r.outMu.Unlock()
+	require.NotNil(t, after, "the region returns after the answer")
+	assert.NotSame(t, before, after, "the old region left the screen for the question")
 }
 
 // TestPrompterShowsATouchRequestUnderQuiet: the copy waits on the person, so
