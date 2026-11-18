@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +117,7 @@ func TestProgressFrameShowsEachFileInFlight(t *testing.T) {
 
 	f := frame(t, r, startedAt.Add(5*time.Second))
 
-	assert.Regexp(t, `photos/big\.raw .* 25%\s+500 B / 1.9 KiB\s+100 B/s\s+ETA 15s`, f)
+	assert.Regexp(t, `photos/big\.raw .* 25%\s+500 B / 2.0 KiB\s+100 B/s\s+ETA 15s`, f)
 	assert.Contains(t, f, "empty.txt")
 	assert.Less(t, strings.Index(f, "big.raw"), strings.Index(f, "empty.txt"), "the oldest file keeps the top row")
 	assert.Less(t, strings.Index(f, "empty.txt"), strings.Index(f, "TOTAL"), "TOTAL is the last row")

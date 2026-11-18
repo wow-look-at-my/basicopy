@@ -78,7 +78,7 @@ func TestMessagesPrintAboveTheRegion(t *testing.T) {
 	r.note("done")
 
 	out := sgr.ReplaceAllString(stderr.String(), "")
-	assert.Contains(t, out, "basicopy: warning: skipping special file /dev/x\n")
+	assert.Contains(t, out, "\rbasicopy: warning: skipping special file /dev/x\r\n", "the message takes a whole row above the region")
 	assert.Equal(t, "copy a.txt\n", stdout.String(), "a stdout that is not the terminal gets its line straight")
 	assert.Contains(t, out, "basicopy: done\n", "after the region goes, a line writes straight through")
 	assert.Nil(t, r.display)
