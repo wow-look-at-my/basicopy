@@ -54,11 +54,11 @@ func (r *runner) progressEnabled() bool {
 	case "always":
 		return true
 	default: // "auto" / ""
-		return isTerminal(r.stderr)
+		return writesToTerminal(r.stderr)
 	}
 }
 
-func isTerminal(w io.Writer) bool {
+func writesToTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
 }
@@ -73,7 +73,7 @@ func (r *runner) runProgress(stop <-chan struct{}) {
 		return
 	}
 	r.outMu.Lock()
-	r.display = &display{live: live, stdoutShared: isTerminal(r.stdout)}
+	r.display = &display{live: live, stdoutShared: writesToTerminal(r.stdout)}
 	r.outMu.Unlock()
 	<-stop
 	r.outMu.Lock()
