@@ -1,7 +1,6 @@
 package vfs
 
 import (
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,16 +78,21 @@ func TestAnyRemote(t *testing.T) {
 func TestSSHArgs(t *testing.T) {
 	loc, err := Parse("ssh://me@pc:2222/srv")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ssh", "-p", "2222", "-l", "me", "-s", "pc", "sftp"}, sshArgs(loc, nil, false))
+	assert.Equal(t, []string{"ssh", "-p", "2222", "-l", "me", "-s", "pc", "sftp"}, sshArgs(loc, nil, false, false))
 
-	// A connection opened to widen the pool must never be able to prompt.
+	// A connection opened to widen the pool must never prompt on the terminal by itself.
 	assert.Equal(t,
 		[]string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
-		sshArgs(loc, nil, true))
+		sshArgs(loc, nil, true, true))
+
+	// With its prompts answered by the broker, it drops BatchMode so a passphrase can reach the key.
+	assert.Equal(t,
+		[]string{"ssh", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me", "-s", "pc", "sftp"},
+		sshArgs(loc, nil, true, false))
 
 	plain, err := Parse("pc:/srv")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ssh", "-s", "pc", "sftp"}, sshArgs(plain, nil, false),
+	assert.Equal(t, []string{"ssh", "-s", "pc", "sftp"}, sshArgs(plain, nil, false, false),
 		"with no user or port, ssh is left to consult the user's own config")
 }
 
@@ -99,7 +103,7 @@ func TestSSHArgsPassesUserOptions(t *testing.T) {
 
 	assert.Equal(t,
 		[]string{"ssh", "-o", "ControlPath=/run/ctl.sock", "-o", "IdentityFile=/keys/deploy", "-s", "pc", "sftp"},
-		sshArgs(plain, user, false),
+		sshArgs(plain, user, false, false),
 		"each option becomes its own -o argument, in the order given")
 
 	// ssh keeps the first value it sees, so position decides who wins.
@@ -108,7 +112,7 @@ func TestSSHArgsPassesUserOptions(t *testing.T) {
 	assert.Equal(t,
 		[]string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-l", "me",
 			"-o", "BatchMode=no", "-o", "Port=22", "-s", "pc", "sftp"},
-		sshArgs(loc, []string{"BatchMode=no", "Port=22"}, true),
+		sshArgs(loc, []string{"BatchMode=no", "Port=22"}, true, true),
 		"a pool connection stays unable to prompt, and the port in the path beats -o Port")
 }
 
@@ -121,9 +125,9 @@ func TestDialGivesEveryConnectionTheUserOptions(t *testing.T) {
 	}
 	var seen []dial
 	old := StartTransport
-	StartTransport = func(loc Location, sshOpts []string, extra bool, w io.Writer) (*Transport, error) {
-		seen = append(seen, dial{sshOpts, extra})
-		return pipeTransport(loc, sshOpts, extra, w)
+	StartTransport = func(c Connect) (*Transport, error) {
+		seen = append(seen, dial{c.SSHOpts, c.Extra})
+		return pipeTransport(c)
 	}
 	t.Cleanup(func() { StartTransport = old })
 
@@ -133,7 +137,7 @@ func TestDialGivesEveryConnectionTheUserOptions(t *testing.T) {
 
 	fsys, _, err := reg.Resolve("pc:/srv")
 	require.NoError(t, err)
-	widened, err := fsys.(*remoteFS).dial()
+	widened, err := fsys.(*remoteFS).dial(nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = widened.close() })
 

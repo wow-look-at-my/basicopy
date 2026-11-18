@@ -23,10 +23,10 @@ jobs:
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
-      # The suites need the host's node and the xattr tools, which only bwrap shares. The docker fallback image has neither.
+      # The suites need the host's node and the xattr tools, which only bwrap shares. The docker fallback image has neither. The Go tests of ssh prompts run the real ssh against a real sshd.
       - uses: wow-look-at-my/actions@cached-apt#latest
         with:
-          packages: attr bubblewrap
+          packages: attr bubblewrap openssh-client openssh-server openssh-tests
       - name: Let bwrap open a user namespace
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: wow-look-at-my/go-toolchain@lkgb
@@ -75,7 +75,10 @@ jobs:
           cp build/bin/basicopy build/bin/basicopy.exe
           chmod +x build/dats.exe build/bin/basicopy build/bin/basicopy.exe
           mkdir -p "$XPLAT_OUT"
-          ./build/dats.exe -v --no-sandbox test dats/data.dats dats/metadata.dats xplat/produce.dats
+          # On Windows the copy leaves every prompt to ssh, so the prompt suite has nothing to check there.
+          suites="dats/data.dats dats/metadata.dats xplat/produce.dats"
+          if [ "$RUNNER_OS" != "Windows" ]; then suites="dats/ssh.dats $suites"; fi
+          ./build/dats.exe -v --no-sandbox test $suites
       # A failed suite on this host is its own finding. The other hosts still copy what this one produced.
       - if: ${{ !cancelled() }}
         uses: wow-look-at-my/buildhost/.github/actions/buildhost-handoff@lkgb

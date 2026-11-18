@@ -117,15 +117,16 @@ func (f *remoteFS) startDialLocked() {
 	}
 	f.dialing = true
 	go func() {
-		c, err := f.dial()
+		c, err := f.dial(f.stop)
 
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.dialing = false
 		if err != nil {
-			// Usually the host wants an interactive credential; give up and share what is open.
+			// Usually the host wants an answer that only the person has; give up and share what is open.
 			f.frozen = true
 		} else {
+			// Close reads conns after the dial ends, so a late connection is closed with the rest.
 			f.conns = append(f.conns, c)
 		}
 		f.free.Broadcast()

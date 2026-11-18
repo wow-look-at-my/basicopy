@@ -27,7 +27,7 @@ func fakeRemote(t *testing.T) {
 	t.Helper()
 	t.Serial()
 	old := vfs.StartTransport
-	vfs.StartTransport = func(vfs.Location, []string, bool, io.Writer) (*vfs.Transport, error) {
+	vfs.StartTransport = func(vfs.Connect) (*vfs.Transport, error) {
 		srvIn, cliOut := io.Pipe()
 		cliIn, srvOut := io.Pipe()
 		server, err := sftp.NewServer(struct {
@@ -57,11 +57,11 @@ func TestRunPassesSSHOptionsToTheTransport(t *testing.T) {
 	var mu sync.Mutex
 	var seen [][]string
 	inner := vfs.StartTransport
-	vfs.StartTransport = func(loc vfs.Location, sshOpts []string, extra bool, w io.Writer) (*vfs.Transport, error) {
+	vfs.StartTransport = func(c vfs.Connect) (*vfs.Transport, error) {
 		mu.Lock()
-		seen = append(seen, sshOpts)
+		seen = append(seen, c.SSHOpts)
 		mu.Unlock()
-		return inner(loc, sshOpts, extra, w)
+		return inner(c)
 	}
 
 	root := t.TempDir()
@@ -186,12 +186,12 @@ func TestRemoteSourceDialsBeforeProgressDraws(t *testing.T) {
 	var stderr lockedBuffer
 	drawnAtDial := -1
 	inner := vfs.StartTransport
-	vfs.StartTransport = func(loc vfs.Location, sshOpts []string, extra bool, w io.Writer) (*vfs.Transport, error) {
-		if !extra {
+	vfs.StartTransport = func(c vfs.Connect) (*vfs.Transport, error) {
+		if !c.Extra {
 			time.Sleep(50 * time.Millisecond) // the user types a password
 			drawnAtDial = stderr.Len()
 		}
-		return inner(loc, sshOpts, extra, w)
+		return inner(c)
 	}
 
 	root := t.TempDir()

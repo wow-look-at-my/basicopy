@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/wow-look-at-my/basicopy/internal/askpass"
 	"github.com/wow-look-at-my/basicopy/internal/engine"
 	"github.com/wow-look-at-my/basicopy/internal/interrupt"
 	"github.com/wow-look-at-my/basicopy/internal/options"
@@ -103,6 +104,10 @@ func init() {
 const exitInterrupted = 130
 
 func main() {
+	// ssh runs this binary as its askpass program. That is not a copy.
+	if askpass.Requested() {
+		os.Exit(askpass.Helper(os.Args[1:], os.Stdout))
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigs := make(chan os.Signal, 2)

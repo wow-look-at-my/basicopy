@@ -22,7 +22,8 @@ import (
 type remoteFS struct {
 	host   string // "[user@]host" for messages
 	prefix string // "[user@]host:" path prefix for output
-	dial   func() (*conn, error)
+	dial   func(stop <-chan struct{}) (*conn, error)
+	stop   chan struct{} // closed by Close; ends a dial in flight
 
 	mu      sync.Mutex
 	free    *sync.Cond // woken when a transfer ends or a connection arrives
@@ -40,12 +41,13 @@ type remoteFS struct {
 // newRemoteFS wraps an established SFTP connection as an FS. host is the display
 // name; dial (optional) opens further connections to the same host as
 // concurrent transfers need them.
-func newRemoteFS(first *conn, host string, dial func() (*conn, error)) FS {
+func newRemoteFS(first *conn, host string, dial func(stop <-chan struct{}) (*conn, error)) FS {
 	f := &remoteFS{
 		host:   host,
 		prefix: host + ":",
 		conns:  []*conn{first},
 		dial:   dial,
+		stop:   make(chan struct{}),
 	}
 	f.free = sync.NewCond(&f.mu)
 	return f
@@ -96,7 +98,14 @@ func (r *remoteFile) Close() error {
 func (f *remoteFS) Close() error {
 	// Keep conns intact: a held transfer gets a truthful closed-client error, not a race.
 	f.mu.Lock()
-	f.closed = true
+	if !f.closed {
+		f.closed = true
+		close(f.stop)
+	}
+	// A dial in flight can wait on a key touch for a long time. stop ends it.
+	for f.dialing {
+		f.free.Wait()
+	}
 	conns := f.conns
 	f.mu.Unlock()
 	f.free.Broadcast()
