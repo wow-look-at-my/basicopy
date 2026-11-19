@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,11 +18,38 @@ var sgr = regexp.MustCompile(`\x1b\[[0-9;:?]*[A-Za-z]`)
 // frame renders one frame of the region at a width wide enough for every column, without colour.
 func frame(t *testing.T, r *runner, now time.Time) string {
 	t.Helper()
+	return frameAt(t, r, now, 120)
+}
+
+// frameAt renders one frame of the region at a given terminal width, without colour.
+func frameAt(t *testing.T, r *runner, now time.Time, width int) string {
+	t.Helper()
 	view, err := progressView()
 	require.NoError(t, err)
-	out, err := view.Render(r.progressProps(now), 120, 14)
+	out, err := view.Render(r.progressProps(now), width, 14)
 	require.NoError(t, err)
 	return sgr.ReplaceAllString(out, "")
+}
+
+// rowWith is the first row of a frame that contains s, without its trailing blanks.
+func rowWith(frame, s string) string {
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.Contains(line, s) {
+			return strings.TrimRight(line, " ")
+		}
+	}
+	return ""
+}
+
+// nonBlank is the rows of a frame that hold any text.
+func nonBlank(frame string) []string {
+	var out []string
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // syncBuffer is a terminal that the region loop and the test both write to.

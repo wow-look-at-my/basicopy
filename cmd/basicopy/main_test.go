@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -117,6 +118,23 @@ func TestVersionCommand(t *testing.T) {
 	versionCmd.SetOut(&out)
 	versionCmd.Run(versionCmd, nil)
 	assert.Contains(t, out.String(), "basicopy ")
+}
+
+func TestBuildCommitNamesTheRevision(t *testing.T) {
+	info := func(settings ...debug.BuildSetting) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{Settings: settings}, true }
+	}
+	assert.Equal(t, " commit 371ea54d7d38, 2026-11-18T19:33:42Z", buildCommit(info(
+		debug.BuildSetting{Key: "vcs.revision", Value: "371ea54d7d38d68679c4eb66e00bb79a764cc3ac"},
+		debug.BuildSetting{Key: "vcs.time", Value: "2026-11-18T19:33:42Z"},
+		debug.BuildSetting{Key: "vcs.modified", Value: "false"},
+	)))
+	assert.Equal(t, " commit abc+dirty", buildCommit(info(
+		debug.BuildSetting{Key: "vcs.revision", Value: "abc"},
+		debug.BuildSetting{Key: "vcs.modified", Value: "true"},
+	)))
+	assert.Empty(t, buildCommit(info()), "a build without VCS stamps prints no commit")
+	assert.Empty(t, buildCommit(func() (*debug.BuildInfo, bool) { return nil, false }))
 }
 
 func TestRootCommandCopies(t *testing.T) {
