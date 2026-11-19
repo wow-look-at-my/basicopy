@@ -18,8 +18,9 @@
 		<Property name="sizes" type="string" default=""/>
 		<Property name="speed" type="string" default=""/>
 		<Property name="eta" type="string" default=""/>
+		<Property name="pathMin" type="string" default="24"/>
 		<Template>
-			<Grid columns="16,4,22,12,11,*[24..]" gap="2" collapse="0,3,4,2" padding="0 0 0 2">
+			<Grid columns="16,4,22,12,11,*[{pathMin}..]" gap="2" collapse="0,3,4,2" padding="0 0 0 2">
 				<ProgressBar Grid.column="0" if="{known}" value="{value}" color="{theme.accent}" trackColor="{theme.track}"/>
 				<Text Grid.column="1" if="{known}" align="right" overflow="clip">{percent}</Text>
 				<Text Grid.column="2" overflow="clip">{sizes}</Text>

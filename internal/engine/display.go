@@ -9,10 +9,13 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/wow-look-at-my/tml"
+	"github.com/wow-look-at-my/tml/cell"
 	"github.com/wow-look-at-my/tml/sema"
 	"golang.org/x/term"
 )
@@ -180,6 +183,12 @@ func (r *runner) progressProps(now time.Time) tml.Props {
 	}
 	rows = append(rows, totalRow(files, totalFiles, moved, totalBytes, current, avg, more))
 
+	// Every row gets the same floor, so the columns line up and a narrow terminal drops numbers before it cuts a name.
+	floor := sema.StringValue(strconv.Itoa(pathFloor(active)))
+	for _, row := range rows {
+		row["pathMin"] = floor
+	}
+
 	return tml.Props{
 		"head":        sema.StringValue(head),
 		"headStyle":   sema.StringValue(headStyle),
@@ -205,6 +214,26 @@ func (r *runner) progressStatus(scanning bool, files, totalFiles, moved, totalBy
 		return "scanning the source; the totals still grow", "status.dim"
 	}
 	return "", "status"
+}
+
+// minPathCells is the narrowest the path column gets while a number column is still on screen.
+const minPathCells = 24
+
+// pathFloor is the width the path column keeps: the widest file name on screen behind "…/", and never under
+// minPathCells.
+func pathFloor(active []*transfer) int {
+	floor := minPathCells
+	for i, t := range active {
+		if i == maxTransferRows {
+			break
+		}
+		name := t.label
+		if cut := strings.LastIndexAny(name, `/\`); cut >= 0 {
+			name = name[cut+1:]
+		}
+		floor = max(floor, cell.Width(name)+2)
+	}
+	return floor
 }
 
 // transferRow is a file in flight. An empty file has no fraction, so the row hides its bar.

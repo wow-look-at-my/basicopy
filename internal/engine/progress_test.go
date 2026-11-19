@@ -161,6 +161,23 @@ func TestProgressFramePathFillsTheRowAndNeverWraps(t *testing.T) {
 	assert.Regexp(t, `src/\S+…/holiday-4k-final-cut\.mov`, frameAt(t, r, startedAt.Add(time.Second), 120), "the start of the path stays while there is room")
 }
 
+func TestProgressFrameNeverCutsALongFileName(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
+	r.totalFiles.Store(2)
+	r.totalBytes.Store(8000)
+	long := "sunset-timelapse-over-the-harbour-final-cut.mov"
+	r.active.add("media/2026/summer-holiday/day-03/"+long, 4000, startedAt).done.Store(1000)
+	r.active.add("media/2026/raw/IMG_102.raw", 4000, startedAt).done.Store(2000)
+
+	for width := len(long) + 10; width <= 200; width += 5 {
+		f := frameAt(t, r, startedAt.Add(time.Second), width)
+		assert.NotEmpty(t, rowWith(f, long), "width %d: the long name shows whole:\n%s", width, f)
+		assert.NotEmpty(t, rowWith(f, "IMG_102.raw"), "width %d: the short name shows whole:\n%s", width, f)
+		assert.Len(t, nonBlank(f), 4, "width %d: head, two files, TOTAL and nothing wrapped:\n%s", width, f)
+	}
+}
+
 func TestProgressFrameFitsTheWidestSpeed(t *testing.T) {
 	r := &runner{startedAt: time.Unix(100, 0)}
 	r.totalBytes.Store(1 << 40)
