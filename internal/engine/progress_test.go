@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/wow-look-at-my/basicopy/internal/options"
 	"github.com/wow-look-at-my/basicopy/internal/vfs"
+	"github.com/wow-look-at-my/tml/cell"
 )
 
 func TestProgressFrameShowsLiveTotalsAndETA(t *testing.T) {
@@ -176,6 +177,27 @@ func TestProgressFrameNeverCutsALongFileName(t *testing.T) {
 		assert.NotEmpty(t, rowWith(f, "IMG_102.raw"), "width %d: the short name shows whole:\n%s", width, f)
 		assert.Len(t, nonBlank(f), 4, "width %d: head, two files, TOTAL and nothing wrapped:\n%s", width, f)
 	}
+}
+
+func TestPathFloorKeepsTheWidestFileName(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
+
+	assert.Equal(t, minPathCells, pathFloor(nil), "the floor starts at its minimum")
+
+	r.active.add("media/2026/raw/IMG_102.raw", 4000, startedAt)
+	assert.Equal(t, minPathCells, pathFloor(r.active.snapshot()), "a short name stays at the minimum floor")
+
+	long := "sunset-timelapse-over-the-harbour-final-cut.mov"
+	r.active.add("media/2026/summer-holiday/day-03/"+long, 4000, startedAt)
+	assert.Equal(t, cell.Width(long)+2, pathFloor(r.active.snapshot()), "the widest name on screen sets the floor")
+
+	folded := &runner{startedAt: startedAt}
+	for i := 0; i < maxTransferRows; i++ {
+		folded.active.add(fmt.Sprintf("file-%02d.raw", i), 4000, startedAt)
+	}
+	folded.active.add("media/2026/"+long, 4000, startedAt)
+	assert.Equal(t, minPathCells, pathFloor(folded.active.snapshot()), "a file folded into +N more does not widen the floor")
 }
 
 func TestProgressFrameFitsTheWidestSpeed(t *testing.T) {
