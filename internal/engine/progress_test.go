@@ -153,7 +153,7 @@ func TestProgressFramePathFillsTheRowAndNeverWraps(t *testing.T) {
 		f := frameAt(t, r, startedAt.Add(time.Second), width)
 		row := rowWith(f, "holiday-4k-final-cut.mov")
 		require.NotEmpty(t, row, "width %d: the file name always shows:\n%s", width, f)
-		assert.Equal(t, 4, len(nonBlank(f)), "width %d: head, one file, TOTAL and nothing wrapped:\n%s", width, f)
+		assert.Len(t, nonBlank(f), 3, "width %d: head, one file, TOTAL and nothing wrapped:\n%s", width, f)
 		if !strings.Contains(row, path) {
 			assert.Regexp(t, `(src/\S*)?…/holiday-4k-final-cut\.mov`, row, "width %d: the cut sits right before the name", width)
 		}
