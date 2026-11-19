@@ -137,6 +137,16 @@ func TestProgressFrameFoldsExtraFilesIntoOneRow(t *testing.T) {
 	assert.Contains(t, f, "+3 more")
 }
 
+func TestProgressFrameFitsTheWidestSpeed(t *testing.T) {
+	r := &runner{startedAt: time.Unix(100, 0)}
+	r.totalBytes.Store(1 << 40)
+	r.meter.rate = 1004.4 * 1024 * 1024
+
+	f := frame(t, r, time.Unix(101, 0))
+
+	assert.Contains(t, f, "1004.4 MiB/s", "a four-digit rate in its widest unit keeps its last cell")
+}
+
 func TestProgressFrameSaysWhenInterrupted(t *testing.T) {
 	r := &runner{startedAt: time.Unix(100, 0)}
 	r.scanning.Store(true)
