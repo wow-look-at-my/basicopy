@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func TestProgressFrameShowsLiveTotalsAndETA(t *testing.T) {
 
 	assert.Contains(t, f, "basicopy: 2/10 files, 3 skipped")
 	assert.Contains(t, f, "avg 50 B/s")
-	assert.Regexp(t, `TOTAL .* 25%\s+250 B / 1000 B .* ETA 15s`, f)
+	assert.Regexp(t, ` 25%\s+250 B / 1000 B .* ETA 15s\s+TOTAL`, f)
 	assert.NotContains(t, f, "scanning")
 }
 
@@ -76,7 +77,7 @@ func TestProgressFrameUsesFileTotalsForZeroByteWork(t *testing.T) {
 	f := frame(t, r, startedAt.Add(time.Second))
 
 	assert.Contains(t, f, "2/4 files")
-	assert.Regexp(t, `TOTAL .* 50%`, f)
+	assert.Regexp(t, ` 50% .* TOTAL`, f)
 }
 
 func TestProgressFrameShowsSkippedWithoutTotals(t *testing.T) {
@@ -117,7 +118,7 @@ func TestProgressFrameShowsEachFileInFlight(t *testing.T) {
 
 	f := frame(t, r, startedAt.Add(5*time.Second))
 
-	assert.Regexp(t, `photos/big\.raw .* 25%\s+500 B / 2.0 KiB\s+100 B/s\s+ETA 15s`, f)
+	assert.Regexp(t, ` 25%\s+500 B / 2.0 KiB\s+100 B/s\s+ETA 15s\s+photos/big\.raw`, f)
 	assert.Contains(t, f, "empty.txt")
 	assert.Less(t, strings.Index(f, "big.raw"), strings.Index(f, "empty.txt"), "the oldest file keeps the top row")
 	assert.Less(t, strings.Index(f, "empty.txt"), strings.Index(f, "TOTAL"), "TOTAL is the last row")
@@ -135,6 +136,29 @@ func TestProgressFrameFoldsExtraFilesIntoOneRow(t *testing.T) {
 	assert.Contains(t, f, fmt.Sprintf("file-%02d", maxTransferRows-1))
 	assert.NotContains(t, f, fmt.Sprintf("file-%02d", maxTransferRows))
 	assert.Contains(t, f, "+3 more")
+}
+
+func TestProgressFramePathFillsTheRowAndNeverWraps(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	r := &runner{startedAt: startedAt}
+	r.totalFiles.Store(1)
+	r.totalBytes.Store(4000)
+	path := "src/videos/2026/summer/the-long-trip/holiday-4k-final-cut.mov"
+	r.active.add(path, 4000, startedAt).done.Store(1000)
+
+	wide := frameAt(t, r, startedAt.Add(time.Second), 200)
+	assert.Regexp(t, `ETA \S+\s+`+regexp.QuoteMeta(path)+`\s*$`, rowWith(wide, "holiday"), "the path is the last column and shows whole when it fits")
+
+	for width := 40; width <= 200; width += 7 {
+		f := frameAt(t, r, startedAt.Add(time.Second), width)
+		row := rowWith(f, "holiday-4k-final-cut.mov")
+		require.NotEmpty(t, row, "width %d: the file name always shows:\n%s", width, f)
+		assert.Equal(t, 4, len(nonBlank(f)), "width %d: head, one file, TOTAL and nothing wrapped:\n%s", width, f)
+		if !strings.Contains(row, path) {
+			assert.Regexp(t, `(src/\S*)?…/holiday-4k-final-cut\.mov`, row, "width %d: the cut sits right before the name", width)
+		}
+	}
+	assert.Contains(t, frameAt(t, r, startedAt.Add(time.Second), 70), "src/", "the start of the path stays while there is room")
 }
 
 func TestProgressFrameFitsTheWidestSpeed(t *testing.T) {
