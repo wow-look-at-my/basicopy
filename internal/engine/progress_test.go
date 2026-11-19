@@ -158,7 +158,7 @@ func TestProgressFramePathFillsTheRowAndNeverWraps(t *testing.T) {
 			assert.Regexp(t, `(src/\S*)?…/holiday-4k-final-cut\.mov`, row, "width %d: the cut sits right before the name", width)
 		}
 	}
-	assert.Contains(t, frameAt(t, r, startedAt.Add(time.Second), 70), "src/", "the start of the path stays while there is room")
+	assert.Regexp(t, `src/\S+…/holiday-4k-final-cut\.mov`, frameAt(t, r, startedAt.Add(time.Second), 120), "the start of the path stays while there is room")
 }
 
 func TestProgressFrameFitsTheWidestSpeed(t *testing.T) {
