@@ -1,11 +1,11 @@
 <?xml version="1.1" encoding="UTF-8"?>
 <Theme xmlns="urn:tml:v1" name="progress">
-	<Token name="accent" light="#1e66f5" dark="#7aa2f7"/>
-	<Token name="ok" light="#40a02b" dark="#9ece6a"/>
-	<Token name="bad" light="#d20f39" dark="#f7768e"/>
-	<Token name="warn" light="#df8e1d" dark="#e0af68"/>
-	<Token name="dim" light="#6c6f85" dark="#565f89"/>
-	<Token name="track" light="#ccd0da" dark="#3b4261"/>
+	<Color name="accent" for="the head line of a copy that runs, the filled part of a bar, and a file in flight" light="#1e66f5" dark="#7aa2f7"/>
+	<Color name="ok" for="the head line of a copy that finished" light="#40a02b" dark="#9ece6a"/>
+	<Color name="bad" for="the head line of a copy that failed" light="#d20f39" dark="#f7768e"/>
+	<Color name="warn" for="the phase line" light="#df8e1d" dark="#e0af68"/>
+	<Color name="dim" for="text the eye can pass over" light="#6c6f85" dark="#565f89"/>
+	<Color name="track" for="the part of a progress bar that is not filled" light="#ccd0da" dark="#3b4261"/>
 
 	<Style name="head" bold="true" fg="{theme.accent}"/>
 	<Style name="head.failed" bold="true" fg="{theme.bad}"/>
