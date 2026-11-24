@@ -99,9 +99,7 @@ func watchW(t *testing.T) func() []int {
 }
 
 // TestLinkBoundRemoteKeepsWSmall is the regression test for a copy over SSH
-// that went to the ceiling of W at once. The link sets the speed here, so more
-// streams buy nothing. The pool dials while the copy starts, so throughput
-// rises with no help from W.
+// that went to the ceiling of W at once.
 func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
 	linkBoundCopy(t, false)
 }
