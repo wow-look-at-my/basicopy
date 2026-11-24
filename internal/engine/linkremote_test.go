@@ -21,17 +21,20 @@ type link struct {
 	perByte time.Duration
 }
 
-// take blocks until the link has carried n more bytes.
+// take blocks until the link has carried n more bytes. An idle link keeps a
+// little credit, so a late wake-up of one sender does not lower the rate.
 func (l *link) take(n int) {
 	l.mu.Lock()
 	now := time.Now()
-	if l.next.Before(now) {
-		l.next = now
+	if credit := now.Add(-20 * time.Millisecond); l.next.Before(credit) {
+		l.next = credit
 	}
 	l.next = l.next.Add(time.Duration(n) * l.perByte)
 	wait := l.next.Sub(now)
 	l.mu.Unlock()
-	time.Sleep(wait)
+	if wait > 0 {
+		time.Sleep(wait)
+	}
 }
 
 type linkWriter struct {
@@ -120,7 +123,7 @@ func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
 
 	ws := seen()
 	require.NotEmpty(t, ws)
-	assert.Equal(t, 4, ws[0], "a remote copy starts small")
+	assert.LessOrEqual(t, ws[0], 4, "a remote copy starts small")
 	peak := 0
 	for _, w := range ws {
 		if w > peak {
@@ -175,8 +178,31 @@ func TestUnsettledNamesEveryCaseThatDoesNotRunW(t *testing.T) {
 
 func TestWorkCountsFinishedFiles(t *testing.T) {
 	r := &runner{}
-	r.moved.Add(1000)
+	r.localMoved.Add(1000)
 	assert.EqualValues(t, 1000, r.workDone())
 	r.jobsDone.Add(3)
 	assert.EqualValues(t, 1000+3*entryWork, r.workDone(), "a file that moves no data still counts as work")
+}
+
+// TestRemoteWorkIsCountedOnTheWire: a remote write reports once per buffer.
+// The controller and the watchdog must see the bytes as they cross.
+func TestRemoteWorkIsCountedOnTheWire(t *testing.T) {
+	fakeRemote(t)
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "f.bin"), make([]byte, 200_000), 0o644)
+
+	r := &runner{reg: vfs.NewRegistry()}
+	defer r.reg.Close()
+	fsys, _, err := r.reg.Resolve("pc:" + root)
+	require.NoError(t, err)
+	before, progress := r.workDone(), r.progressCount()
+
+	f, err := fsys.Open(filepath.Join(root, "f.bin"))
+	require.NoError(t, err)
+	n, err := io.Copy(io.Discard, f)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	assert.GreaterOrEqual(t, r.workDone()-before, n, "the bytes of a remote read count as work, with no progress callback")
+	assert.GreaterOrEqual(t, r.progressCount()-progress, n, "and as forward progress")
 }

@@ -24,6 +24,7 @@ type remoteFS struct {
 	prefix string // "[user@]host:" path prefix for output
 	dial   func(stop <-chan struct{}) (*conn, error)
 	stop   chan struct{} // closed by Close; ends a dial in flight
+	wire   *atomic.Int64 // bytes that crossed every connection, both directions
 
 	mu      sync.Mutex
 	free    *sync.Cond // woken when a transfer ends or a connection arrives
@@ -42,11 +43,12 @@ type remoteFS struct {
 // newRemoteFS wraps an established SFTP connection as an FS. host is the display
 // name; dial (optional) opens further connections to the same host as
 // concurrent transfers need them.
-func newRemoteFS(first *conn, host string, dial func(stop <-chan struct{}) (*conn, error)) FS {
+func newRemoteFS(first *conn, host string, wire *atomic.Int64, dial func(stop <-chan struct{}) (*conn, error)) FS {
 	f := &remoteFS{
 		host:   host,
 		prefix: host + ":",
 		conns:  []*conn{first},
+		wire:   wire,
 		dial:   dial,
 		stop:   make(chan struct{}),
 	}

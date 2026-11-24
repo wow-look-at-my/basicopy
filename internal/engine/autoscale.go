@@ -96,9 +96,23 @@ func (r *runner) runController(sc scaler, stop <-chan struct{}) {
 // entryWork is the work that one finished file counts for, in bytes.
 const entryWork = 64 << 10
 
-// workDone is the measure of the copy streams' output that the controller compares across W.
+// workDone is what the controller compares across W. A remote write reports once per buffer, so the wire counts for it.
 func (r *runner) workDone() int64 {
-	return r.moved.Load() + entryWork*r.jobsDone.Load()
+	return r.localMoved.Load() + r.traffic() + entryWork*r.jobsDone.Load()
+}
+
+// traffic is the bytes exchanged with every remote host so far.
+func (r *runner) traffic() int64 {
+	if r.reg == nil {
+		return 0
+	}
+	var n int64
+	for _, fsys := range r.reg.Remotes() {
+		if pooled, ok := fsys.(vfs.Pooled); ok {
+			n += pooled.Traffic()
+		}
+	}
+	return n
 }
 
 // unsettled reports that the streams that move data now are not W streams. A

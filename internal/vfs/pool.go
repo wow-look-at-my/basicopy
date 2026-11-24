@@ -153,6 +153,9 @@ func (f *remoteFS) Pool() (open int, frozen bool) {
 	return len(f.conns), f.frozen
 }
 
+// Traffic reports the bytes that crossed the connections of this host, in both directions.
+func (f *remoteFS) Traffic() int64 { return f.wire.Load() }
+
 // Waiting reports the transfers that wait for a connection. They move no data yet.
 func (f *remoteFS) Waiting() int {
 	f.mu.Lock()

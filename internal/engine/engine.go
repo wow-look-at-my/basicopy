@@ -238,6 +238,8 @@ type runner struct {
 	moved atomic.Int64
 	// jobsDone counts the files that the workers finished: copied, unchanged or failed.
 	jobsDone atomic.Int64
+	// localMoved is the part of moved that crossed no connection. The wire counts the rest.
+	localMoved atomic.Int64
 
 	// totalFiles/totalBytes grow as the walk discovers work, giving live progress and ETA without blocking copying.
 	totalFiles, totalBytes atomic.Int64
@@ -369,9 +371,13 @@ func (r *runner) copyOne(job fileJob) {
 	t := r.active.add(r.transferLabel(job), job.info.Size(), time.Now())
 	defer r.active.remove(t)
 	opts := r.copyOpts
+	local := job.srcFS.Local() && r.dfs.Local()
 	opts.Progress = func(n int64) {
 		r.moved.Add(n)
 		t.done.Add(n)
+		if local {
+			r.localMoved.Add(n)
+		}
 	}
 	for attempt := 0; ; attempt++ {
 		t.done.Store(0)
