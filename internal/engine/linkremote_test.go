@@ -93,8 +93,10 @@ func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
 		size  = 1 << 20
 		rate  = 16 << 20
 	)
+	t.Serial()
 	restore := fastControlLoops(t)
 	defer restore()
+	// A slower tick than the other tests use: one tick must carry enough packets to measure a rate.
 	controlInterval = 20 * time.Millisecond
 	linkRemote(t, rate, 60*time.Millisecond)
 	seen := watchW(t)
