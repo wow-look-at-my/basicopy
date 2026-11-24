@@ -75,14 +75,16 @@ func (r *runner) runController(sc scaler, stop <-chan struct{}) {
 			if dt <= 0 {
 				continue
 			}
+			// All workers busy, nothing finished: I/O is stalled; grow W, don't hold it.
+			blocked := stalled && r.gate.saturated()
 			s := control.Sample{
 				Throughput: float64(dw) / dt,
 				SysCPU:     -1,
 				DevUtil:    -1,
 				Rotational: rotational,
-				// All workers busy, nothing finished: I/O is stalled; grow W, don't hold it.
-				Blocked:   stalled && r.gate.saturated(),
-				Unsettled: r.unsettled(),
+				Blocked:    blocked,
+				// A stall outranks a trim that still waits for its files to end.
+				Unsettled: r.connWaiting() || (!blocked && r.unsettled()),
 			}
 			if v, ok := cpu.Sample(); ok {
 				s.SysCPU = v
@@ -127,9 +129,13 @@ func (r *runner) unsettled() bool {
 		// The walk supplies less work than W streams take.
 		return true
 	}
+	return r.connWaiting()
+}
+
+// connWaiting reports a stream that waits for a connection. It moves no data, and one more stream would wait too.
+func (r *runner) connWaiting() bool {
 	for _, fsys := range r.reg.Remotes() {
 		if pooled, ok := fsys.(vfs.Pooled); ok && pooled.Waiting() > 0 {
-			// A stream that waits for a connection moves no data.
 			return true
 		}
 	}

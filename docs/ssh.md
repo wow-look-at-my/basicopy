@@ -121,6 +121,18 @@ The connection pool only helps if the copy keeps asking for concurrent transfers
 
 So a stalled interval — every worker occupied, and not one byte, file, or directory finished. It is reported to the controller as such (`control.Sample`'s `Blocked`), and it grows instead of concluding. A stall says nothing about `W` being too high, and the only harm it can do is leave latency un-overlapped. Once bytes flow again the ordinary plateau loop resumes and trims back whatever the stall bought.
 
+### How the worker pool measures a copy over SSH
+
+The controller raises `W` only when more streams bought more throughput. Over SSH multiple things can fake that gain, and each has its own answer.
+
+- **The pool is still dialing.** A stream that waits for a connection moves no data, and throughput rises as each connection arrives. That rise is not a gain from `W`. While a stream waits, the controller takes no measurement and changes nothing.
+- **The link is still warming up.** A new connection speeds up for some seconds by itself. The controller waits until throughput stops rising at a constant `W`. Only then does it compare.
+- **A write reports late.** A write to a remote file reports when the host acknowledged the whole buffer. On a slow link whole ticks pass with no report, and that looks like a stall. So the controller counts the bytes on the ssh pipes, which move with every packet.
+
+A remote copy also starts with few streams. The number of cores in this machine says nothing about the far host or the link between them. The controller climbs from there on measured gains.
+
+When `W` is too high, the controller trims it. A larger trim follows a trim that costs no throughput. An overshoot is gone in seconds. A trim does not stop a file that already started. The controller waits for those files to end before it measures the lower `W`.
+
 ## What SFTP cannot carry
 
 These are protocol limits, not omissions. Everything else — content, mode, mtime, ownership, symlinks, hardlink *creation* on the destination, directory structure, free-space reporting — works normally.
