@@ -11,6 +11,8 @@ type gate struct {
 	limit int // current max concurrent holders (W)
 	max   int // hard ceiling
 	inUse int
+	// waiting counts the workers that hold a job and have no slot.
+	waiting int
 }
 
 func newGate(max, initial int) *gate {
@@ -30,9 +32,11 @@ func newGate(max, initial int) *gate {
 
 func (g *gate) acquire() {
 	g.mu.Lock()
+	g.waiting++
 	for g.inUse >= g.limit {
 		g.cond.Wait()
 	}
+	g.waiting--
 	g.inUse++
 	g.mu.Unlock()
 }
@@ -50,6 +54,13 @@ func (g *gate) saturated() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.inUse >= g.limit
+}
+
+// load reports the slots in use, the limit W, and the workers that wait for a slot.
+func (g *gate) load() (inUse, limit, waiting int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inUse, g.limit, g.waiting
 }
 
 // current returns the live limit W.

@@ -18,17 +18,30 @@ var (
 	connInterval    = 500 * time.Millisecond
 )
 
-// runController is the auto-scaling loop. It seeds the worker limit from the
-// device class, then each tick measures achieved throughput plus the CPU. And
-// device-util guard signals and lets the controller resize the gate.
-func (r *runner) runController(stop <-chan struct{}) {
-	dstInfo := r.probeDevice(r.localDestProbe())
-	srcInfo := r.probeDevice(r.localSourceProbe())
-	rotational := dstInfo.Rotational() || srcInfo.Rotational()
+// scaler is the controller and the devices it watches.
+type scaler struct {
+	c          *control.Controller
+	dst, src   device.Info
+	rotational bool
+}
 
-	start := controllerStartW(rotational, r.gate.max)
-	c := control.New(1, r.gate.max, start)
-	r.gate.setLimit(start)
+// seedController sets the first W. Run calls it before a worker starts, so no file starts above that W.
+func (r *runner) seedController() scaler {
+	sc := scaler{
+		dst: r.probeDevice(r.localDestProbe()),
+		src: r.probeDevice(r.localSourceProbe()),
+	}
+	sc.rotational = sc.dst.Rotational() || sc.src.Rotational()
+	start := controllerStartW(sc.rotational, len(r.reg.Remotes()) > 0, r.gate.max)
+	sc.c = control.New(1, r.gate.max, start)
+	r.setW(start)
+	return sc
+}
+
+// runController is the auto-scaling loop. Each tick it measures the work rate
+// and the guard signals, and the controller sets the limit of the gate.
+func (r *runner) runController(sc scaler, stop <-chan struct{}) {
+	c, dstInfo, srcInfo, rotational := sc.c, sc.dst, sc.src, sc.rotational
 
 	dstUtil := device.NewUtilSampler(dstInfo.Name)
 	var srcUtil *device.UtilSampler
@@ -42,7 +55,7 @@ func (r *runner) runController(stop <-chan struct{}) {
 	defer ticker.Stop()
 	connTicker := time.NewTicker(connInterval)
 	defer connTicker.Stop()
-	prevBytes := r.moved.Load()
+	prevWork := r.workDone()
 	prevProgress := r.progressCount()
 	prevTime := time.Now()
 
@@ -53,29 +66,69 @@ func (r *runner) runController(stop <-chan struct{}) {
 		case <-connTicker.C:
 			conns.tick(r, r.reg.Remotes())
 		case now := <-ticker.C:
-			nb := r.moved.Load()
+			nw := r.workDone()
 			np := r.progressCount()
 			dt := now.Sub(prevTime).Seconds()
-			db := nb - prevBytes
+			dw := nw - prevWork
 			stalled := np == prevProgress
-			prevBytes, prevProgress, prevTime = nb, np, now
+			prevWork, prevProgress, prevTime = nw, np, now
 			if dt <= 0 {
 				continue
 			}
 			s := control.Sample{
-				Throughput: float64(db) / dt,
+				Throughput: float64(dw) / dt,
 				SysCPU:     -1,
 				DevUtil:    -1,
 				Rotational: rotational,
 				// All workers busy, nothing finished: I/O is stalled; grow W, don't hold it.
-				Blocked: stalled && r.gate.saturated(),
+				Blocked:   stalled && r.gate.saturated(),
+				Unsettled: r.unsettled(),
 			}
 			if v, ok := cpu.Sample(); ok {
 				s.SysCPU = v
 			}
 			s.DevUtil = sampleUtil(dstUtil, srcUtil)
-			r.gate.setLimit(c.Update(s))
+			r.setW(c.Update(s))
 		}
+	}
+}
+
+// entryWork is the work that one finished file counts for, in bytes.
+const entryWork = 64 << 10
+
+// workDone is the measure of the copy streams' output that the controller compares across W.
+func (r *runner) workDone() int64 {
+	return r.moved.Load() + entryWork*r.jobsDone.Load()
+}
+
+// unsettled reports that the streams that move data now are not W streams. A
+// throughput from such a tick says nothing about W.
+func (r *runner) unsettled() bool {
+	inUse, limit, waiting := r.gate.load()
+	if inUse > limit {
+		// Files that started before a trim still run.
+		return true
+	}
+	if inUse < limit && waiting == 0 {
+		// The walk supplies less work than W streams take.
+		return true
+	}
+	for _, fsys := range r.reg.Remotes() {
+		if pooled, ok := fsys.(vfs.Pooled); ok && pooled.Waiting() > 0 {
+			// A stream that waits for a connection moves no data.
+			return true
+		}
+	}
+	return false
+}
+
+// observeW is a test seam: it sees each W the controller sets.
+var observeW func(w int)
+
+func (r *runner) setW(w int) {
+	r.gate.setLimit(w)
+	if observeW != nil {
+		observeW(w)
 	}
 }
 
@@ -150,13 +203,19 @@ func sampleUtil(dst, src *device.UtilSampler) float64 {
 }
 
 // controllerStartW seeds W from the device type: conservative on rotational
-// (avoid seek thrashing), generous on SSD/unknown to fill queue depth.
-func controllerStartW(rotational bool, max int) int {
+// (avoid seek thrashing), generous on a local SSD to fill queue depth.
+func controllerStartW(rotational, remote bool, max int) int {
 	if rotational {
 		if max < 2 {
 			return max
 		}
 		return 2
+	}
+	if remote {
+		if max < 4 {
+			return max
+		}
+		return 4
 	}
 	start := 2 * runtime.NumCPU()
 	if start < 4 {

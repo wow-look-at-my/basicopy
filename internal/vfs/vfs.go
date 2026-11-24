@@ -106,6 +106,8 @@ func Unsupported(err error) bool {
 type Pooled interface {
 	// Pool reports open connections, and whether growth gave up (host wants a credential).
 	Pool() (open int, frozen bool)
+	// Waiting reports the transfers that hold a worker and wait for a connection.
+	Waiting() int
 }
 
 // SameHost: a path on a single FS means the same thing on the other. Connections to a single host count as the same host.

@@ -1,0 +1,180 @@
+package engine
+
+import (
+	"fmt"
+	"io"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/wow-look-at-my/basicopy/internal/options"
+	"github.com/wow-look-at-my/basicopy/internal/vfs"
+)
+
+// link is one network path that every connection shares: rate bytes per second in total.
+type link struct {
+	mu      sync.Mutex
+	next    time.Time
+	perByte time.Duration
+}
+
+// take blocks until the link has carried n more bytes.
+func (l *link) take(n int) {
+	l.mu.Lock()
+	now := time.Now()
+	if l.next.Before(now) {
+		l.next = now
+	}
+	l.next = l.next.Add(time.Duration(n) * l.perByte)
+	wait := l.next.Sub(now)
+	l.mu.Unlock()
+	time.Sleep(wait)
+}
+
+type linkWriter struct {
+	io.WriteCloser
+	l *link
+}
+
+func (w linkWriter) Write(p []byte) (int, error) {
+	w.l.take(len(p))
+	return w.WriteCloser.Write(p)
+}
+
+// linkRemote puts "pc:" behind one slow link. All connections share rate bytes
+// per second of upload, and each connection after the first takes dial to open.
+func linkRemote(t *testing.T, rate int, dial time.Duration) {
+	t.Helper()
+	fakeRemote(t)
+	inner := vfs.StartTransport
+	l := &link{perByte: time.Second / time.Duration(rate)}
+	vfs.StartTransport = func(c vfs.Connect) (*vfs.Transport, error) {
+		if c.Extra {
+			time.Sleep(dial)
+		}
+		tr, err := inner(c)
+		if err != nil {
+			return nil, err
+		}
+		tr.Stdin = linkWriter{WriteCloser: tr.Stdin, l: l}
+		return tr, nil
+	}
+}
+
+// watchW records every W that the controller sets during a test.
+func watchW(t *testing.T) func() []int {
+	t.Helper()
+	t.Serial()
+	var mu sync.Mutex
+	var ws []int
+	observeW = func(w int) {
+		mu.Lock()
+		ws = append(ws, w)
+		mu.Unlock()
+	}
+	t.Cleanup(func() { observeW = nil })
+	return func() []int {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]int(nil), ws...)
+	}
+}
+
+// TestLinkBoundRemoteKeepsWSmall is the regression test for a copy over SSH
+// that went to the ceiling of W at once. The link sets the speed here, so more
+// streams buy nothing. The pool dials while the copy starts, so throughput
+// rises with no help from W.
+func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
+	const (
+		files = 40
+		size  = 1 << 20
+		rate  = 16 << 20
+	)
+	restore := fastControlLoops(t)
+	defer restore()
+	controlInterval = 20 * time.Millisecond
+	linkRemote(t, rate, 60*time.Millisecond)
+	seen := watchW(t)
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	for i := 0; i < files; i++ {
+		writeFile(t, filepath.Join(src, fmt.Sprintf("f%02d.bin", i)), make([]byte, size), 0o644)
+	}
+
+	o := &options.Options{
+		Sources:    []string{src},
+		TargetDir:  "pc:" + dst,
+		MaxThreads: 256,
+		Progress:   "never",
+	}
+	sum, _, _ := captureRun(t, o)
+	require.EqualValues(t, files, sum.Files)
+	require.Zero(t, sum.Failed)
+
+	ws := seen()
+	require.NotEmpty(t, ws)
+	assert.Equal(t, 4, ws[0], "a remote copy starts small")
+	peak := 0
+	for _, w := range ws {
+		if w > peak {
+			peak = w
+		}
+	}
+	assert.LessOrEqual(t, peak, 16, "a link-bound copy must not pile on streams; W went %v", compact(ws))
+}
+
+// compact drops the repeats from a W history, for a failure message.
+func compact(ws []int) []int {
+	var out []int
+	for _, w := range ws {
+		if len(out) == 0 || out[len(out)-1] != w {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func TestUnsettledNamesEveryCaseThatDoesNotRunW(t *testing.T) {
+	r := &runner{gate: newGate(8, 2), reg: vfs.NewRegistry()}
+	assert.True(t, r.unsettled(), "no stream runs and no worker waits: the walk supplies too little work")
+
+	r.gate.acquire()
+	r.gate.acquire()
+	assert.False(t, r.unsettled(), "W streams run")
+
+	r.gate.setLimit(1)
+	assert.True(t, r.unsettled(), "a trim does not stop a file that already started")
+
+	r.gate.setLimit(3)
+	assert.True(t, r.unsettled(), "a slot is free and no worker wants it")
+
+	waiter := make(chan struct{})
+	r.gate.setLimit(2)
+	go func() {
+		r.gate.acquire()
+		close(waiter)
+	}()
+	require.Eventually(t, func() bool {
+		_, _, waiting := r.gate.load()
+		return waiting == 1
+	}, time.Second, time.Millisecond)
+	assert.False(t, r.unsettled(), "W streams run and more work waits")
+
+	r.gate.release()
+	<-waiter
+	r.gate.release()
+	r.gate.release()
+}
+
+func TestWorkCountsFinishedFiles(t *testing.T) {
+	r := &runner{}
+	r.moved.Add(1000)
+	assert.EqualValues(t, 1000, r.workDone())
+	r.jobsDone.Add(3)
+	assert.EqualValues(t, 1000+3*entryWork, r.workDone(), "a file that moves no data still counts as work")
+}

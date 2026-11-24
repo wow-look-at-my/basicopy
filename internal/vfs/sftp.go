@@ -29,6 +29,7 @@ type remoteFS struct {
 	free    *sync.Cond // woken when a transfer ends or a connection arrives
 	conns   []*conn
 	dialing bool // a dial is in flight
+	waiting int  // transfers that wait in acquire for a connection
 	frozen  bool // dialing failed a single time;
 	closed  bool // the FS has been closed; no more dialing
 

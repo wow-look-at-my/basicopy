@@ -87,7 +87,9 @@ func (f *remoteFS) acquire() *conn {
 			return c
 		}
 		f.startDialLocked()
+		f.waiting++
 		f.free.Wait()
+		f.waiting--
 	}
 }
 
@@ -149,4 +151,11 @@ func (f *remoteFS) Pool() (open int, frozen bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.conns), f.frozen
+}
+
+// Waiting reports the transfers that wait for a connection. They move no data yet.
+func (f *remoteFS) Waiting() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.waiting
 }
