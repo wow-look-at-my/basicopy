@@ -47,8 +47,19 @@ func (w linkWriter) Write(p []byte) (int, error) {
 	return w.WriteCloser.Write(p)
 }
 
+type linkReader struct {
+	io.Reader
+	l *link
+}
+
+func (r linkReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.l.take(n)
+	return n, err
+}
+
 // linkRemote puts "pc:" behind one slow link. All connections share rate bytes
-// per second of upload, and each connection after the first takes dial to open.
+// per second, in both directions together. Each connection after the first takes dial to open.
 func linkRemote(t *testing.T, rate int, dial time.Duration) {
 	t.Helper()
 	fakeRemote(t)
@@ -63,6 +74,7 @@ func linkRemote(t *testing.T, rate int, dial time.Duration) {
 			return nil, err
 		}
 		tr.Stdin = linkWriter{WriteCloser: tr.Stdin, l: l}
+		tr.Stdout = linkReader{Reader: tr.Stdout, l: l}
 		return tr, nil
 	}
 }
@@ -91,6 +103,16 @@ func watchW(t *testing.T) func() []int {
 // streams buy nothing. The pool dials while the copy starts, so throughput
 // rises with no help from W.
 func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
+	linkBoundCopy(t, false)
+}
+
+// TestLinkBoundDownloadKeepsWSmall is the same copy from the host to this machine. A read reports once per buffer too.
+func TestLinkBoundDownloadKeepsWSmall(t *testing.T) {
+	linkBoundCopy(t, true)
+}
+
+func linkBoundCopy(t *testing.T, download bool) {
+	t.Helper()
 	const (
 		files = 40
 		size  = 1 << 20
@@ -116,6 +138,9 @@ func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
 		TargetDir:  "pc:" + dst,
 		MaxThreads: 256,
 		Progress:   "never",
+	}
+	if download {
+		o.Sources, o.TargetDir = []string{"pc:" + src}, dst
 	}
 	sum, _, _ := captureRun(t, o)
 	require.EqualValues(t, files, sum.Files)
