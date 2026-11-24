@@ -70,7 +70,7 @@ func linkRemote(t *testing.T, rate int, dial time.Duration) {
 // watchW records every W that the controller sets during a test.
 func watchW(t *testing.T) func() []int {
 	t.Helper()
-	t.Serial()
+	t.Serial("observeW is a package variable")
 	var mu sync.Mutex
 	var ws []int
 	observeW = func(w int) {
@@ -96,7 +96,7 @@ func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
 		size  = 1 << 20
 		rate  = 16 << 20
 	)
-	t.Serial()
+	t.Serial("controlInterval is a package variable")
 	restore := fastControlLoops(t)
 	defer restore()
 	// A slower tick than the other tests use: one tick must carry enough packets to measure a rate.
@@ -123,6 +123,7 @@ func TestLinkBoundRemoteKeepsWSmall(t *testing.T) {
 
 	ws := seen()
 	require.NotEmpty(t, ws)
+	t.Logf("W went %v", compact(ws))
 	assert.LessOrEqual(t, ws[0], 4, "a remote copy starts small")
 	peak := 0
 	for _, w := range ws {
