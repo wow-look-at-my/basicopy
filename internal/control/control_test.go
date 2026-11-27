@@ -152,3 +152,33 @@ func TestBlockedThenFlowingTrimsBack(t *testing.T) {
 	assert.LessOrEqual(t, tailAvg(ws, 80), 12.0, "the excess a stall bought is trimmed once throughput can be measured")
 	assert.GreaterOrEqual(t, tailAvg(ws, 80), 2.0, "but not below what the ceiling needs")
 }
+
+// linkBound drives c against a link that caps throughput at ceiling, whatever
+// W is. The link takes warm ticks to reach that cap, as it does while an SSH
+// pool dials its connections.
+func linkBound(c *Controller, ceiling float64, warm, n int) []int {
+	ws := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		t := ceiling
+		if i < warm {
+			t = ceiling * float64(i+1) / float64(warm)
+		}
+		noise := 1 + 0.02*math.Sin(float64(i)*1.3)
+		ws = append(ws, c.Update(Sample{Throughput: t * noise, SysCPU: -1, DevUtil: -1}))
+	}
+	return ws
+}
+
+// TestWarmUpIsNotCreditedToW: throughput that rises on its own must not read as a gain from more streams.
+func TestWarmUpIsNotCreditedToW(t *testing.T) {
+	c := New(1, 256, 4)
+	ws := linkBound(c, 44e6, 40, 400)
+	assert.LessOrEqual(t, maxOf(ws), 9, "a link that warms up by itself is no reason to add streams")
+}
+
+// TestOvershootIsTrimmedFast: a W far above the plateau must come down in seconds, not minutes.
+func TestOvershootIsTrimmedFast(t *testing.T) {
+	c := New(1, 256, 256)
+	ws := run(c, curve{peak: 1e9, knee: 2, ceiling: 0.5e9}, nil, 240)
+	assert.LessOrEqual(t, ws[len(ws)-1], 8, "one minute of ticks is enough to shed streams that buy nothing")
+}

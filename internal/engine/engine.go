@@ -119,6 +119,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 
 	stopBg := make(chan struct{})
 	if !opts.DryRun {
+		sc := r.seedController()
 		for i := 0; i < maxW; i++ {
 			r.wg.Add(1)
 			go r.worker()
@@ -128,7 +129,7 @@ func Run(ctx context.Context, opts *options.Options) (*Summary, error) {
 			go r.metadataWorker()
 		}
 		r.bgWg.Add(3)
-		go func() { defer r.bgWg.Done(); r.runController(stopBg) }()
+		go func() { defer r.bgWg.Done(); r.runController(sc, stopBg) }()
 		go func() { defer r.bgWg.Done(); r.runWatchdog(stopBg) }()
 		go func() { defer r.bgWg.Done(); r.runProgress(stopBg) }()
 	}
@@ -235,6 +236,10 @@ type runner struct {
 
 	// moved is a monotonic live-progress counter, distinct from bytes (the completed-copy total used for the summary).
 	moved atomic.Int64
+	// jobsDone counts the files that the workers finished: copied, unchanged or failed.
+	jobsDone atomic.Int64
+	// localMoved is the part of moved that crossed no connection. The wire counts the rest.
+	localMoved atomic.Int64
 
 	// totalFiles/totalBytes grow as the walk discovers work, giving live progress and ETA without blocking copying.
 	totalFiles, totalBytes atomic.Int64
@@ -321,6 +326,7 @@ func (r *runner) worker() {
 		}
 		r.gate.acquire()
 		r.copyOne(job)
+		r.jobsDone.Add(1)
 		r.gate.release()
 		r.completeDirWork(job.parent)
 	}
@@ -365,9 +371,13 @@ func (r *runner) copyOne(job fileJob) {
 	t := r.active.add(r.transferLabel(job), job.info.Size(), time.Now())
 	defer r.active.remove(t)
 	opts := r.copyOpts
+	local := job.srcFS.Local() && r.dfs.Local()
 	opts.Progress = func(n int64) {
 		r.moved.Add(n)
 		t.done.Add(n)
+		if local {
+			r.localMoved.Add(n)
+		}
 	}
 	for attempt := 0; ; attempt++ {
 		t.done.Store(0)

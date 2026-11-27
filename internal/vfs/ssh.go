@@ -235,11 +235,13 @@ var clientOptions = []sftp.ClientOption{
 
 // dialConn opens a single ssh connection and starts an SFTP session on it. A
 // close of stop ends a dial that still waits, for example on a key touch.
-func dialConn(c Connect, stop <-chan struct{}) (*conn, error) {
+func dialConn(c Connect, stop <-chan struct{}, wire *atomic.Int64) (*conn, error) {
 	t, err := StartTransport(c)
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", c.Loc.Host, err)
 	}
+	t.Stdout = countReader{Reader: t.Stdout, n: wire}
+	t.Stdin = countWriter{WriteCloser: t.Stdin, n: wire}
 	ready := make(chan struct{})
 	defer close(ready)
 	if stop != nil {
@@ -263,6 +265,30 @@ func dialConn(c Connect, stop <-chan struct{}) (*conn, error) {
 	return &conn{client: client, close: t.Close}, nil
 }
 
+// countReader and countWriter add the bytes that cross a connection to n. A
+// file write reports only when the host has acknowledged all of it.
+type countReader struct {
+	io.Reader
+	n *atomic.Int64
+}
+
+func (c countReader) Read(p []byte) (int, error) {
+	n, err := c.Reader.Read(p)
+	c.n.Add(int64(n))
+	return n, err
+}
+
+type countWriter struct {
+	io.WriteCloser
+	n *atomic.Int64
+}
+
+func (c countWriter) Write(p []byte) (int, error) {
+	n, err := c.WriteCloser.Write(p)
+	c.n.Add(int64(n))
+	return n, err
+}
+
 // authNoteDelay is how long a pool-widening dial may run before the copy says that it waits.
 var authNoteDelay = 5 * time.Second
 
@@ -275,7 +301,8 @@ func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broke
 	if !loc.Remote {
 		return Local, nil
 	}
-	first, err := dialConn(Connect{Loc: loc, Stderr: os.Stderr, Prompts: prompts, SSHOpts: sshOpts, NoTerminal: noTerminal}, nil)
+	wire := new(atomic.Int64)
+	first, err := dialConn(Connect{Loc: loc, Stderr: os.Stderr, Prompts: prompts, SSHOpts: sshOpts, NoTerminal: noTerminal}, nil, wire)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +310,7 @@ func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broke
 		diag = os.Stderr
 	}
 	var noted atomic.Bool
-	return newRemoteFS(first, hostLabel(loc), func(stop <-chan struct{}) (*conn, error) {
+	return newRemoteFS(first, hostLabel(loc), wire, func(stop <-chan struct{}) (*conn, error) {
 		// An agent can hold a dial for a touch that this process cannot see. Say so one time.
 		note := time.AfterFunc(authNoteDelay, func() {
 			if noted.CompareAndSwap(false, true) {
@@ -291,7 +318,7 @@ func Dial(loc Location, sshOpts []string, diag io.Writer, prompts *askpass.Broke
 			}
 		})
 		defer note.Stop()
-		return dialConn(Connect{Loc: loc, Extra: true, Stderr: diag, Prompts: prompts, SSHOpts: sshOpts, NoTerminal: noTerminal}, stop)
+		return dialConn(Connect{Loc: loc, Extra: true, Stderr: diag, Prompts: prompts, SSHOpts: sshOpts, NoTerminal: noTerminal}, stop, wire)
 	}), nil
 }
 

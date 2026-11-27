@@ -230,6 +230,44 @@ func TestPoolGrowsWithConcurrentTransfers(t *testing.T) {
 	require.NoError(t, third.Close())
 }
 
+// TestPoolReportsTransfersThatWaitForAConnection: such a transfer holds a
+// worker and moves no data, and the worker controller must know that.
+func TestPoolReportsTransfersThatWaitForAConnection(t *testing.T) {
+	fsys := testFS(t)
+	rf := fsys.(*remoteFS)
+	pooled := fsys.(Pooled)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello"), 0o644))
+
+	// Hold the dial until the test lets it go.
+	dial := rf.dial
+	gate := make(chan struct{})
+	rf.dial = func(stop <-chan struct{}) (*conn, error) {
+		<-gate
+		return dial(stop)
+	}
+
+	first, err := fsys.Open(path)
+	require.NoError(t, err)
+	assert.Zero(t, pooled.Waiting(), "the first transfer has the first connection")
+
+	opened := make(chan File, 1)
+	go func() {
+		f, err := fsys.Open(path)
+		assert.NoError(t, err)
+		opened <- f
+	}()
+	require.Eventually(t, func() bool { return pooled.Waiting() == 1 }, 5*time.Second, time.Millisecond,
+		"the second transfer waits for the dial")
+
+	close(gate)
+	second := <-opened
+	assert.Zero(t, pooled.Waiting(), "a transfer with a connection no longer waits")
+	require.NoError(t, first.Close())
+	require.NoError(t, second.Close())
+}
+
 // TestPoolStopsAtMaxConnections: transfers share connections rather than wait
 // forever a single time the ceiling is reached.
 func TestPoolStopsAtMaxConnections(t *testing.T) {
